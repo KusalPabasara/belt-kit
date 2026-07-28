@@ -37,6 +37,18 @@ function VehiclesInner() {
   const [saving, setSaving] = useState(false);
 
   const canEdit = role === "owner" || role === "manager" || role === "advisor";
+  const validateYear = (year:number) => {
+  const currentYear = new Date().getFullYear();
+
+  return (
+    year.toString().length === 4 &&
+    year <= currentYear
+  );
+};
+
+const validateRequiredText = (value:string) => {
+  return value.trim().length > 0;
+};
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   async function doDelete(id: string) {
@@ -125,15 +137,38 @@ function VehiclesInner() {
       plateNumber: String(form.get("plateNumber") || "").trim().toUpperCase(),
       make: String(form.get("make") || "").trim(),
       model: String(form.get("model") || "").trim(),
-      year: form.get("year") ? Number(form.get("year")) : undefined,
-      vin: String(form.get("vin") || "").trim() || undefined,
-      engine: String(form.get("engine") || "").trim() || undefined,
+      year: Number(form.get("year")),
+vin: String(form.get("vin") || "").trim(),
+engine: String(form.get("engine") || "").trim(),
     };
-    if (!payload.customerId || !payload.plateNumber || !payload.make) {
-      notify("Owner, plate and make are required.", "error");
-      setSaving(false);
-      return;
-    }
+    if (
+  !payload.customerId ||
+  !payload.plateNumber ||
+  !payload.make ||
+  !payload.model ||
+  !payload.engine ||
+  !payload.vin ||
+  !payload.year
+) {
+  notify(
+    "Owner, plate, make, model, year, VIN and engine number are required.",
+    "error"
+  );
+
+  setSaving(false);
+  return;
+}
+
+
+if (!validateYear(payload.year)) {
+  notify(
+    "Year must contain 4 digits and cannot be greater than current year.",
+    "error"
+  );
+
+  setSaving(false);
+  return;
+}
     try {
       if (editing) {
         await updateDocById("vehicles", editing.id, payload);
@@ -272,15 +307,17 @@ function VehiclesInner() {
                 placeholder="e.g. CAB-1234"
               />
             </Field>
-            <Field label="Year">
-              <input
-                name="year"
-                type="number"
-                defaultValue={editing?.year}
-                className="input-luxe"
-                placeholder="2019"
-              />
-            </Field>
+            <Field label="Year" required>
+<input
+  name="year"
+  type="number"
+  min="1900"
+  max={new Date().getFullYear()}
+  defaultValue={editing?.year}
+  className="input-luxe"
+  placeholder="2019"
+/>
+</Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Make" required>
@@ -291,7 +328,7 @@ function VehiclesInner() {
                 placeholder="Toyota"
               />
             </Field>
-            <Field label="Model">
+            <Field label="Model" required>
               <input
                 name="model"
                 defaultValue={editing?.model}
@@ -301,20 +338,20 @@ function VehiclesInner() {
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="VIN">
+            <Field label="VIN" required>
               <input
                 name="vin"
                 defaultValue={editing?.vin}
                 className="input-luxe"
-                placeholder="optional"
+                
               />
             </Field>
-            <Field label="Engine">
+            <Field label="Engine" required>
               <input
                 name="engine"
                 defaultValue={editing?.engine}
                 className="input-luxe"
-                placeholder="optional"
+                
               />
             </Field>
           </div>

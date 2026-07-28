@@ -73,6 +73,7 @@ const [editVehicles, setEditVehicles] = useState<(Vehicle & { id: string })[]>([
   const { data: parts } = useCollection<Part>("parts");
   const { data: services } = useCollection<ServiceType>("services");
   const { data: branches } = useCollection<Branch>("branches");
+  const today = new Date().toISOString().split("T")[0];
   const serviceNames = (ids: string[]) =>
     services
       .filter((s) => ids?.includes(s.id))
@@ -86,6 +87,7 @@ const [editVehicles, setEditVehicles] = useState<(Vehicle & { id: string })[]>([
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [technicians, setTechnicians] = useState<{ uid: string; name: string }[]>([]);
   const [editOpen,setEditOpen]=useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
 const [editCustomer, setEditCustomer] = useState("");
 const [editVehicle, setEditVehicle] = useState("");
 const [editServices, setEditServices] = useState<string[]>([]);
@@ -1048,11 +1050,12 @@ className="input-luxe h-32"
 <Field label="Scheduled Date">
 
 <input
-name="scheduledDate"
-type="date"
-value={editScheduledDate}
-onChange={(e)=>setEditScheduledDate(e.target.value)}
-className="input-luxe"
+  name="scheduledDate"
+  type="date"
+  min={today}
+  value={editScheduledDate}
+  onChange={(e)=>setEditScheduledDate(e.target.value)}
+  className="input-luxe"
 />
 
 </Field>
@@ -1122,36 +1125,36 @@ className="input-luxe"
 <Field label="Start Date">
 
 <input
-name="startDate"
-type="date"
-defaultValue={
- job.startDate
- ? job.startDate.toDate()
-   .toISOString()
-   .split("T")[0]
- : ""
-}
-className="input-luxe"
+  name="startDate"
+  type="date"
+  min={today}
+  defaultValue={
+    job.startDate
+    ? job.startDate.toDate()
+      .toISOString()
+      .split("T")[0]
+    : ""
+  }
+  className="input-luxe"
 />
-
 </Field>
 
 
 <Field label="Promised End Date">
 
 <input
-name="promisedEndDate"
-type="date"
-defaultValue={
- job.promisedEndDate
- ? job.promisedEndDate.toDate()
-   .toISOString()
-   .split("T")[0]
- : ""
-}
-className="input-luxe"
+  name="promisedEndDate"
+  type="date"
+  min={today}
+  defaultValue={
+    job.promisedEndDate
+    ? job.promisedEndDate.toDate()
+      .toISOString()
+      .split("T")[0]
+    : ""
+  }
+  className="input-luxe"
 />
-
 </Field>
 
 

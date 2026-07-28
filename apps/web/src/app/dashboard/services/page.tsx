@@ -7,10 +7,13 @@ import {
   Pencil,
   Power,
   Sparkles,
+  Search,
+  FileText,
 } from "lucide-react";
 import { seedServices } from "@/lib/service-seeder";
 import { auth } from "@/lib/firebase";
-
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { useAuth } from "@/lib/auth-context";
 import { useCollection } from "@/lib/useCollection";
 import {
@@ -61,7 +64,9 @@ export default function ServicesPage() {
 
 
   const [saving,setSaving] = useState(false);
-
+  const [priceError, setPriceError] = useState("");
+const [search, setSearch] = useState("");
+const [statusFilter, setStatusFilter] = useState<"all" | "active" | "disabled">("all");
 
   const canEdit = canManageServices(role);
 
@@ -89,8 +94,74 @@ async function createStarterServices(){
 
 }
 
+function generateServiceReport(){
+
+  const doc = new jsPDF();
 
 
+  doc.setFontSize(18);
+  doc.text(
+    "Service Report",
+    14,
+    20
+  );
+
+
+  doc.setFontSize(11);
+  doc.text(
+    `Generated Date: ${new Date().toLocaleDateString()}`,
+    14,
+    28
+  );
+
+
+  const tableData = filteredServices.map(service => [
+
+    service.name,
+
+    formatMoney(
+      service.defaultPriceMinor
+    ),
+
+    service.active
+      ? "Active"
+      : "Disabled",
+
+    `${service.estimatedDays} days`
+
+  ]);
+
+
+
+  autoTable(doc, {
+
+    startY: 35,
+
+    head: [
+      [
+        "Service",
+        "Price",
+        "Status",
+        "Estimated Days"
+      ]
+    ],
+
+    body: tableData,
+
+  });
+
+
+
+  doc.save(
+    "service-report.pdf"
+  );
+
+
+  notify(
+    "Service PDF report generated"
+  );
+
+}
 
   async function handleSave(form:FormData){
 
@@ -101,28 +172,29 @@ async function createStarterServices(){
 
 
 
-    const payload = {
-
-      name:
-        String(form.get("name") || "")
-        .trim(),
+    const priceMinor = toMinor(
+  String(form.get("price") || "0")
+);
 
 
-      defaultPriceMinor:
-        toMinor(
-          String(form.get("price") || "0")
-        ),
+const payload = {
+
+  name:
+    String(form.get("name") || "")
+    .trim(),
 
 
-      estimatedDays:
-        Number(form.get("days") || 1),
+  defaultPriceMinor: priceMinor,
 
 
-      // FIX: keep disabled service disabled
-      active:
-        editing?.active ?? true,
+  estimatedDays:
+    Number(form.get("days") || 1),
 
-    };
+
+  active:
+    editing?.active ?? true,
+
+};
 
 
 
@@ -137,6 +209,24 @@ async function createStarterServices(){
 
       return;
     }
+
+    if(priceMinor <= 0){
+
+  setPriceError(
+    "Price must be greater than 0.00"
+  );
+
+  notify(
+    "Service price must be greater than 0.00",
+    "error"
+  );
+
+  setSaving(false);
+
+  return;
+}
+
+setPriceError("");
 
 
 
@@ -271,7 +361,24 @@ async function createStarterServices(){
   }
 
 
+const filteredServices = services.filter((service) => {
 
+  const matchesSearch =
+    service.name
+      .toLowerCase()
+      .includes(search.toLowerCase());
+
+  const matchesStatus =
+    statusFilter === "all"
+      ? true
+      : statusFilter === "active"
+      ? service.active
+      : !service.active;
+
+
+  return matchesSearch && matchesStatus;
+
+});
 
 
   const columns:
@@ -427,7 +534,86 @@ async function createStarterServices(){
 
       />
 
+<div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 
+
+<div className="relative">
+
+<Search 
+size={16}
+className="absolute left-3 top-3 text-ink-faint"
+/>
+
+
+<input
+
+className="input-luxe pl-9"
+
+placeholder="Search services..."
+
+value={search}
+
+onChange={(e)=>setSearch(e.target.value)}
+
+/>
+
+</div>
+
+
+
+<div className="flex gap-2">
+
+
+<select
+
+className="input-luxe"
+
+value={statusFilter}
+
+onChange={(e)=>
+setStatusFilter(
+e.target.value as "all" | "active" | "disabled"
+)
+}
+
+>
+
+<option value="all">
+All Services
+</option>
+
+<option value="active">
+Active Services
+</option>
+
+<option value="disabled">
+Disabled Services
+</option>
+
+
+</select>
+
+
+
+<button
+
+className="btn-ghost"
+
+onClick={generateServiceReport}
+
+>
+
+<FileText size={16}/>
+
+Report
+
+</button>
+
+
+</div>
+
+
+</div>
 
 
 
@@ -464,7 +650,9 @@ async function createStarterServices(){
 
           <DataTable
 
-            rows={services}
+            
+
+rows={filteredServices}
 
             columns={columns}
 
@@ -618,32 +806,19 @@ async function createStarterServices(){
           >
 
             <input
-
-              name="price"
-
-              defaultValue={
-
-                editing
-
-                ?
-
-                (
-                  editing.defaultPriceMinor / 100
-                ).toString()
-
-                :
-
-                ""
-
-              }
-
-              className="input-luxe"
-
-              placeholder="25000"
-
-              inputMode="decimal"
-
-            />
+  name="price"
+  type="number"
+  min="0"
+  step="0.01"
+  defaultValue={
+    editing
+      ? (editing.defaultPriceMinor / 100).toString()
+      : ""
+  }
+  className="input-luxe"
+  placeholder="25000"
+  inputMode="decimal"
+/>
 
           </Field>
 

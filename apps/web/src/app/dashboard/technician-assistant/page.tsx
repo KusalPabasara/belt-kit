@@ -186,7 +186,7 @@ export default function TechnicianAssistantPage() {
     setThinkingStep(0);
     setError("");
     try {
-      const token = await auth.currentUser?.getIdToken();
+const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("Sign in before using the technician assistant.");
       let chatId = selectedChatId;
       if (!chatId) {

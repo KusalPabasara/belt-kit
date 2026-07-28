@@ -162,10 +162,46 @@ export default function InventoryPage() {
   ];
 
   async function handleSave(form: FormData) {
-    if (!branchId) return;
-    setSaving(true);
-    const quantityOnHand = Number(form.get("quantityOnHand") || 0);
-    const reorderThreshold = Number(form.get("reorderThreshold") || 0);
+  if (!branchId) return;
+
+  const quantityOnHand = Number(form.get("quantityOnHand"));
+  const reorderThreshold = Number(form.get("reorderThreshold"));
+  const cost = Number(form.get("cost"));
+  const sell = Number(form.get("sell"));
+
+  if (!form.get("name") || !form.get("sku")) {
+    notify("Part name and SKU are required.", "error");
+    return;
+  }
+
+  if (isNaN(cost) || cost <= 0) {
+    notify("Cost price must be greater than 0.", "error");
+    return;
+  }
+
+  if (isNaN(sell) || sell <= 0) {
+    notify("Sell price must be greater than 0.", "error");
+    return;
+  }
+
+  if (isNaN(quantityOnHand) || quantityOnHand <= 0) {
+  notify("Quantity on hand must be greater than 0.", "error");
+  return;
+}
+
+if (isNaN(reorderThreshold) || reorderThreshold <= 0) {
+  notify("Reorder level must be greater than 0.", "error");
+  return;
+}
+
+const binLocation = String(form.get("bin") || "").trim();
+
+if (!binLocation) {
+  notify("Bin location is required.", "error");
+  return;
+}
+
+  setSaving(true);
     const payload = {
       sku: String(form.get("sku") || "").trim(),
       name: String(form.get("name") || "").trim(),
@@ -174,7 +210,7 @@ export default function InventoryPage() {
       quantityOnHand,
       reorderThreshold,
       lowStock: quantityOnHand <= reorderThreshold,
-      binLocation: String(form.get("bin") || "").trim() || undefined,
+      binLocation,
     };
     if (!payload.name || !payload.sku) {
       notify("Name and SKU are required.", "error");
@@ -428,18 +464,21 @@ export default function InventoryPage() {
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Cost price (LKR)">
+            <Field label="Cost price (LKR) *">
               <input
-                name="cost"
-                defaultValue={editing ? (editing.costPriceMinor / 100).toString() : ""}
-                className="input-luxe"
-                placeholder="0.00"
-                inputMode="decimal"
-              />
+  name="cost"
+  required
+  defaultValue={editing ? (editing.costPriceMinor / 100).toString() : ""}
+  className="input-luxe"
+  placeholder="0.00"
+  inputMode="decimal"
+/>
             </Field>
-            <Field label="Sell price (LKR)">
+            <Field label="Sell price (LKR) *">
               <input
                 name="sell"
+                  required
+
                 defaultValue={editing ? (editing.sellPriceMinor / 100).toString() : ""}
                 className="input-luxe"
                 placeholder="0.00"
@@ -448,32 +487,35 @@ export default function InventoryPage() {
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="Qty on hand">
-              <input
-                name="quantityOnHand"
-                type="number"
-                min={0}
-                defaultValue={editing?.quantityOnHand ?? 0}
-                className="input-luxe"
-              />
-            </Field>
-            <Field label="Reorder at">
-              <input
-                name="reorderThreshold"
-                type="number"
-                min={0}
-                defaultValue={editing?.reorderThreshold ?? 0}
-                className="input-luxe"
-              />
-            </Field>
-            <Field label="Bin location">
-              <input
-                name="bin"
-                defaultValue={editing?.binLocation}
-                className="input-luxe"
-                placeholder="A-12"
-              />
-            </Field>
+            <Field label="Qty on hand *">
+  <input
+    name="quantityOnHand"
+    type="number"
+    min={0}
+    required
+    defaultValue={editing?.quantityOnHand ?? ""}
+    className="input-luxe"
+  />
+</Field>
+            <Field label="Reorder at *">
+  <input
+    name="reorderThreshold"
+    type="number"
+    min={0}
+    required
+    defaultValue={editing?.reorderThreshold ?? ""}
+    className="input-luxe"
+  />
+</Field>
+            <Field label="Bin location *">
+  <input
+    name="bin"
+    required
+    defaultValue={editing?.binLocation}
+    className="input-luxe"
+    placeholder="A-12"
+  />
+</Field>
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button

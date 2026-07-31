@@ -16,7 +16,7 @@ const READABLE: Record<Role, string[]> = {
   owner: [
     "jobCards", "jobCardLines", "customers", "vehicles",
     "parts", "stockMovements", "invoices", "payments", "users",
-    "branches", "auditLog","services",
+    "branches", "auditLog","services","insuranceClaims",
   ],
   manager: [
     "jobCards", "jobCardLines", "customers", "vehicles",

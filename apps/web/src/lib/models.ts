@@ -144,6 +144,50 @@ export interface StockMovement {
   createdAt?: Timestamp;
 }
 
+export type InsuranceClaimStatus =
+  | "pending"
+  | "approved"
+  | "received"
+  | "rejected";
+
+
+export interface InsuranceClaim {
+
+  id:string;
+
+  branchId:string;
+
+  jobCardId:string;
+
+  customerId:string;
+
+  vehicleId:string;
+
+
+  companyName:string;
+
+  policyNumber?:string;
+
+  claimNumber?:string;
+
+
+  claimAmountMinor:number;
+
+  receivedAmountMinor:number;
+
+
+  status:InsuranceClaimStatus;
+
+
+  notes?:string;
+
+
+  archived?:boolean;
+
+  createdAt:any;
+
+}
+
 export type AssistantMessageRole = "user" | "assistant";
 
 export interface AssistantAnswer {

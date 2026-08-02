@@ -181,7 +181,10 @@ export default function TechnicianAssistantPage() {
 
   async function askAssistant(event: FormEvent) {
     event.preventDefault();
-    if (!draft.trim() || sending || !branchId) return;
+    if (!draft.trim() || sending) return;
+    // Fall back to the default branch if the account has none set, so the
+    // assistant never silently does nothing.
+    const activeBranchId = branchId || "main";
     setSending(true);
     setThinkingStep(0);
     setError("");
@@ -190,7 +193,7 @@ const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("Sign in before using the technician assistant.");
       let chatId = selectedChatId;
       if (!chatId) {
-        const chat = await createDoc("assistantChats", branchId, {
+        const chat = await createDoc("assistantChats", activeBranchId, {
           ownerUid: auth.currentUser?.uid ?? "unknown",
           title: draft.trim().slice(0, 70),
           lastMessagePreview: draft.trim().slice(0, 120),
@@ -204,7 +207,7 @@ const token = await auth.currentUser?.getIdToken(true);
         role: item.role,
         content: item.role === "assistant" && item.answer ? JSON.stringify(item.answer) : item.content,
       }));
-      await createDoc("assistantMessages", branchId, {
+      await createDoc("assistantMessages", activeBranchId, {
         chatId,
         ownerUid: auth.currentUser?.uid ?? "unknown",
         role: "user",
@@ -227,7 +230,7 @@ const token = await auth.currentUser?.getIdToken(true);
       });
       const body = (await response.json()) as { answer?: AssistantAnswer; sources?: string[]; error?: string };
       if (!response.ok || !body.answer) throw new Error(body.error || "The assistant could not prepare a response.");
-      await createDoc("assistantMessages", branchId, {
+      await createDoc("assistantMessages", activeBranchId, {
         chatId,
         ownerUid: auth.currentUser?.uid ?? "unknown",
         role: "assistant",

@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Ollama } from "ollama";
 import { z } from "zod";
 import { WORKSHOP_KNOWLEDGE } from "@/lib/assistant-knowledge";
 import { verifyTechnicianToken } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Technician Assistant — powered by Groq (free tier, no card, works on a
+ * deployed site — unlike local Ollama). Groq exposes an OpenAI-compatible API.
+ *
+ * Set GROQ_API_KEY in the environment (get one free at https://console.groq.com).
+ * Optionally override the model with GROQ_MODEL.
+ *
+ * Note: Groq's free tier is TEXT-ONLY, so image attachments are ignored here
+ * (text repair questions work fully). To keep image support, use a vision
+ * provider instead.
+ */
+
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
 const inputSchema = z.object({
   message: z.string().trim().min(2).max(2000),
@@ -57,68 +71,40 @@ const inputSchema = z.object({
   }),
 });
 
-const answerSchema = z.object({
-  summary: z.string(),
-  urgency: z.enum(["routine", "soon", "stop_and_inspect"]),
-  likelyCauses: z.array(z.string()).max(4),
-  nextChecks: z.array(z.string()).min(1).max(6),
-  toolsOrParts: z.array(z.string()).max(6),
-  safetyWarning: z.string().nullable(),
-  followUpQuestion: z.string(),
-});
-
-type EmbeddedArticle = { id: string; title: string; vector: number[] };
-let embeddedKnowledge: EmbeddedArticle[] | null = null;
-
-function ollamaClient() {
-  return new Ollama({
-    host: process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
-  });
-}
-
-function cosineSimilarity(left: number[], right: number[]) {
-  let dot = 0;
-  let leftMagnitude = 0;
-  let rightMagnitude = 0;
-  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
-    dot += left[index] * right[index];
-    leftMagnitude += left[index] ** 2;
-    rightMagnitude += right[index] ** 2;
-  }
-  return leftMagnitude && rightMagnitude ? dot / Math.sqrt(leftMagnitude * rightMagnitude) : 0;
-}
-
-async function retrieveKnowledge(client: Ollama, question: string) {
-  const embeddingModel = process.env.OLLAMA_EMBEDDING_MODEL || "embeddinggemma";
-  const [queryResult, articles] = await Promise.all([
-    client.embed({ model: embeddingModel, input: question }),
-    embeddedKnowledge
-      ? Promise.resolve(embeddedKnowledge)
-      : client
-          .embed({
-            model: embeddingModel,
-            input: WORKSHOP_KNOWLEDGE.map((article) => `${article.title}\n${article.content}`),
-          })
-          .then((result) => {
-            embeddedKnowledge = WORKSHOP_KNOWLEDGE.map((article, index) => ({
-              id: article.id,
-              title: article.title,
-              vector: result.embeddings[index],
-            }));
-            return embeddedKnowledge;
-          }),
-  ]);
-
-  const queryVector = queryResult.embeddings[0];
-  return articles
-    .map((article) => ({
-      article,
-      score: cosineSimilarity(queryVector, article.vector),
-    }))
-    .sort((left, right) => right.score - left.score)
+/**
+ * Lightweight keyword retrieval over the workshop knowledge base (no embedding
+ * API needed). Returns up to 3 of the most relevant reference notes.
+ */
+function retrieveKnowledge(question: string) {
+  const words = new Set(
+    question
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3)
+  );
+  return WORKSHOP_KNOWLEDGE.map((article) => {
+    const haystack = `${article.title} ${article.content}`.toLowerCase();
+    let score = 0;
+    for (const w of words) {
+      if (haystack.includes(w)) score += 1;
+    }
+    return { article, score };
+  })
+    .sort((a, b) => b.score - a.score)
     .slice(0, 3)
-    .map(({ article }) => WORKSHOP_KNOWLEDGE.find((item) => item.id === article.id)!)
-    .filter(Boolean);
+    .filter((r) => r.score > 0)
+    .map((r) => r.article);
+}
+
+/** Extract the first {...} JSON object from a model text response. */
+function extractJson(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1] : text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("No JSON object in model response.");
+  return JSON.parse(candidate.slice(start, end + 1));
 }
 
 export async function POST(request: NextRequest) {
@@ -130,9 +116,17 @@ export async function POST(request: NextRequest) {
     await verifyTechnicianToken(token);
   } catch (error) {
     if (error instanceof Error && error.message === "TECHNICIAN_ONLY") {
-      return NextResponse.json({ error: "The Technician Assistant is available only to technician accounts." }, { status: 403 });
+      return NextResponse.json({ error: "The Technician Assistant is available only to staff accounts." }, { status: 403 });
     }
     return NextResponse.json({ error: "Your session is not valid. Sign in again before using the assistant." }, { status: 401 });
+  }
+
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "The assistant is not configured. Add GROQ_API_KEY to enable it." },
+      { status: 503 }
+    );
   }
 
   const parsed = inputSchema.safeParse(await request.json().catch(() => null));
@@ -140,77 +134,125 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Enter a technician question and valid vehicle context." }, { status: 400 });
   }
 
-  const client = ollamaClient();
-  const chatModel = process.env.OLLAMA_CHAT_MODEL || "qwen3:4b";
-  const visionModel = process.env.OLLAMA_VISION_MODEL || "qwen2.5vl:3b";
-
   try {
-    const sources = await retrieveKnowledge(client, parsed.data.message);
+    const sources = retrieveKnowledge(parsed.data.message);
     const context = parsed.data.context;
-    const imageAttachments = parsed.data.attachments.filter(
-      (attachment) => attachment.mimeType.startsWith("image/") && attachment.dataUrl
-    );
+
     const textAttachments = parsed.data.attachments
-      .filter((attachment) => attachment.text)
-      .map((attachment) => `Attachment: ${attachment.name}\n${attachment.text}`)
+      .filter((a) => a.text)
+      .map((a) => `Attachment: ${a.name}\n${a.text}`)
       .join("\n\n");
-    const historyMessages = parsed.data.history.map((item) => ({
+    const hasImages = parsed.data.attachments.some((a) => a.mimeType.startsWith("image/"));
+
+    const systemInstruction = `You are Belt-Kit Technician Assistant. Help a trained automotive technician think through a repair. Use the supplied job, vehicle, inventory and retrieved reference notes. Do not invent torque specifications, part compatibility, measurements, or completed tests. State uncertainty and ask one useful follow-up. Never instruct unsafe work; escalate high-voltage, braking, fuel, lifting, or overheating risks. Do not claim to have performed any action.
+
+Return ONLY a JSON object with exactly these keys:
+{"summary": string, "urgency": "routine"|"soon"|"stop_and_inspect", "likelyCauses": string[], "nextChecks": string[], "toolsOrParts": string[], "safetyWarning": string|null, "followUpQuestion": string}
+No prose outside the JSON.`;
+
+    // Build the conversation as OpenAI-compatible messages (Groq).
+    const history = parsed.data.history.map((item) => ({
       role: item.role,
       content: item.content,
     }));
-    const response = await client.chat({
-      model: imageAttachments.length ? visionModel : chatModel,
-      stream: false,
-      format: z.toJSONSchema(answerSchema),
-      options: { temperature: 0.2 },
-      messages: [
-        {
-          role: "system",
-          content: `You are Belt-Kit Technician Assistant. Help a trained automotive technician think through a repair. Use the supplied job, vehicle, inventory and retrieved reference notes. Do not invent torque specifications, part compatibility, measurements, or completed tests. State uncertainty and ask one useful follow-up. Never instruct unsafe work; escalate high-voltage, braking, fuel, lifting, or overheating risks. Do not claim to have performed any action. Return only JSON matching the required schema.`,
-        },
-        ...historyMessages,
-        {
-          role: "user",
-          content: JSON.stringify({
-            technicianQuestion: parsed.data.message,
-            activeJob: context.job ?? "No active job card selected",
-            vehicle: context.vehicle ?? "No vehicle selected",
-            inventory: context.parts,
-            attachments: textAttachments || "No text attachments",
-            retrievedReferenceNotes: sources.map((source) => ({ title: source.title, content: source.content })),
-          }),
-          ...(imageAttachments.length
-            ? { images: imageAttachments.map((attachment) => attachment.dataUrl!.split(",")[1] ?? attachment.dataUrl!) }
-            : {}),
-        },
-      ],
+
+    const userPayload = JSON.stringify({
+      technicianQuestion: parsed.data.message,
+      activeJob: context.job ?? "No active job card selected",
+      vehicle: context.vehicle ?? "No vehicle selected",
+      inventory: context.parts,
+      attachments: textAttachments || "No text attachments",
+      // Groq free tier is text-only; note images so the model can ask for a
+      // written description instead of silently ignoring them.
+      imageNote: hasImages
+        ? "The technician attached a photo, but this assistant cannot view images. Ask them to describe what they see."
+        : undefined,
+      retrievedReferenceNotes: sources.map((s) => ({ title: s.title, content: s.content })),
     });
-    const answer = answerSchema.parse(JSON.parse(response.message.content));
-    return NextResponse.json({ answer, sources: sources.map((source) => source.title) });
+
+    const body = {
+      model: GROQ_MODEL,
+      temperature: 0.2,
+      response_format: { type: "json_object" as const },
+      messages: [
+        { role: "system", content: systemInstruction },
+        ...history,
+        { role: "user", content: userPayload },
+      ],
+    };
+
+    const callGroq = () =>
+      fetch(GROQ_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+    // Try once; if we hit a transient rate-limit (429), wait briefly and retry
+    // a single time so short free-tier spikes stay invisible to the user.
+    let res = await callGroq();
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, 3000));
+      res = await callGroq();
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      const quota = res.status === 429;
+      return NextResponse.json(
+        {
+          error: quota
+            ? "The assistant hit its free-tier rate limit. Wait a minute and try again."
+            : `The assistant service returned an error (${res.status}). ${errText.slice(0, 200)}`,
+        },
+        { status: 503 }
+      );
+    }
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const text = data.choices?.[0]?.message?.content ?? "";
+    if (!text.trim()) {
+      return NextResponse.json(
+        { error: "The assistant returned an empty response. Try rephrasing your question." },
+        { status: 503 }
+      );
+    }
+
+    // Parse leniently: coerce/fill missing fields so a slightly-off model
+    // response still renders instead of failing the whole request.
+    const raw = extractJson(text) as Record<string, unknown>;
+    const asStringArray = (v: unknown): string[] =>
+      Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
+    const summary = typeof raw.summary === "string" && raw.summary.trim()
+      ? raw.summary
+      : typeof (raw as { answer?: string }).answer === "string"
+        ? String((raw as { answer?: string }).answer)
+        : text.slice(0, 500);
+    const nextChecks = asStringArray(raw.nextChecks);
+    const answer = {
+      summary,
+      urgency: (["routine", "soon", "stop_and_inspect"] as const).includes(raw.urgency as never)
+        ? (raw.urgency as "routine" | "soon" | "stop_and_inspect")
+        : "routine",
+      likelyCauses: asStringArray(raw.likelyCauses).slice(0, 4),
+      nextChecks: nextChecks.length ? nextChecks.slice(0, 6) : ["Review the symptom and inspect the related system."],
+      toolsOrParts: asStringArray(raw.toolsOrParts).slice(0, 6),
+      safetyWarning:
+        typeof raw.safetyWarning === "string" && raw.safetyWarning.trim() ? raw.safetyWarning : null,
+      followUpQuestion:
+        typeof raw.followUpQuestion === "string" ? raw.followUpQuestion : "Anything else about this vehicle?",
+    };
+    return NextResponse.json({ answer, sources: sources.map((s) => s.title) });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The local AI service is unavailable.";
-    const missingModel = /model .* not found|not found/i.test(message);
-    const memoryLimit = /more system memory|out of memory|memory/i.test(message);
-    const activeModel = imageAttachmentsModelHint(parsed.data.attachments, visionModel, chatModel);
+    const message = error instanceof Error ? error.message : "The assistant service is unavailable.";
     return NextResponse.json(
-      {
-        error: memoryLimit && imageAttachmentsModelHint(parsed.data.attachments, visionModel, chatModel) === visionModel
-          ? `The image model needs more RAM than this computer currently has. Text questions still work; use a smaller Ollama vision model or attach a text description instead.`
-          : missingModel
-          ? `Required Ollama model is missing. Run: ollama pull ${activeModel} (and ollama pull ${process.env.OLLAMA_EMBEDDING_MODEL || "embeddinggemma"} for retrieval).`
-          : "Technician Assistant cannot reach local Ollama. Start Ollama, then try again.",
-      },
+      { error: `The assistant could not complete your request. ${message.slice(0, 200)}` },
       { status: 503 }
     );
   }
-}
-
-function imageAttachmentsModelHint(
-  attachments: Array<{ mimeType: string }>,
-  visionModel: string,
-  chatModel: string
-) {
-  return attachments.some((attachment) => attachment.mimeType.startsWith("image/"))
-    ? visionModel
-    : chatModel;
 }

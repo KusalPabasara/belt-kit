@@ -21,12 +21,12 @@ const READABLE: Record<Role, string[]> = {
   manager: [
     "jobCards", "jobCardLines", "customers", "vehicles",
     "parts", "stockMovements", "invoices", "payments", "users",
-    "branches", "auditLog","services",
+    "branches", "auditLog","services","insuranceClaims",
   ],
   advisor: [
     "jobCards", "jobCardLines", "customers", "vehicles",
     "parts", "stockMovements", "invoices", "payments", "users",
-    "branches", "auditLog","services",
+    "branches", "auditLog","services","insuranceClaims",
   ],
   technician: ["jobCards", "jobCardLines", "vehicles", "parts", "branches", "assistantChats", "assistantMessages"],
   accountant: [

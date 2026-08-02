@@ -179,6 +179,11 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create, update, delete: if isTeam();
     }
+    // Supplier payments
+    match /supplierPayments/{id} {
+      allow read: if isStaff();
+      allow create, update, delete: if isTeam();
+    }
     // Employees
     match /employees/{id} {
       allow read: if isStaff();
@@ -201,6 +206,11 @@ service cloud.firestore {
     }
     // Job photos (before/after) — if stored as their own collection
     match /jobPhotos/{id} {
+      allow read: if isStaff();
+      allow create, update, delete: if isTeam();
+    }
+    // Insurance claims
+    match /insuranceClaims/{id} {
       allow read: if isStaff();
       allow create, update, delete: if isTeam();
     }

@@ -1,6 +1,15 @@
 "use client";
 
-import { auth } from "../firebase";
+/**
+ * Attendance report — 100% client-side PDF generation (no Cloud Functions).
+ * Free-tier safe. Builds the PDF in the browser with jsPDF from Firestore data,
+ * keeping the same `downloadAttendanceReport(request)` signature callers use.
+ */
+
+import { jsPDF } from "jspdf";
+import { getAttendanceList } from "./attendanceService";
+import { getEmployees } from "./employeeService";
+import type { Attendance } from "../types/attendance";
 
 export type AttendanceReportRequest =
   | { reportType: "month"; month: string }
@@ -8,144 +17,112 @@ export type AttendanceReportRequest =
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-function getFunctionsBaseUrl() {
-  const configuredUrl = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL?.trim();
-  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
-
-  const useEmulator =
-    process.env.NEXT_PUBLIC_USE_EMULATOR === "true" ||
-    process.env.NEXT_PUBLIC_FUNCTIONS_EMULATOR === "true";
-
-  if (useEmulator) {
-    return "http://127.0.0.1:5001/belt-kit/us-central1";
-  }
-
-  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "belt-kit";
-  return `https://us-central1-${projectId}.cloudfunctions.net`;
-}
-
-async function readErrorMessage(response: Response) {
-  const fallback = `Could not download attendance report (${response.status}).`;
-  const contentType = response.headers.get("content-type") ?? "";
-
-  if (!contentType.includes("application/json")) {
-    const message = (await response.text()).trim();
-    return message || fallback;
-  }
-
-  try {
-    const body = (await response.json()) as {
-      error?: string | { message?: string };
-      message?: string;
-    };
-    if (typeof body.error === "string") return body.error;
-    return body.error?.message ?? body.message ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function fetchAttendanceReport(
-  url: string,
-  forceRefresh: boolean,
-): Promise<Response> {
-  // Read currentUser for every attempt. Firebase updates this reference through
-  // its auth-state listener, so no user or token is cached by this service.
-  const user = auth.currentUser;
-  if (!user) {
-    throw new Error("User is not authenticated");
-  }
-
-  const token = await user.getIdToken(forceRefresh);
-  return fetch(url, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-}
-
-function redirectToLogin() {
-  if (typeof window === "undefined") return;
-  const returnUrl = `${window.location.pathname}${window.location.search}`;
-  window.location.assign(`/login?returnUrl=${encodeURIComponent(returnUrl)}`);
-}
-
-function getDownloadFilename(header: string | null, request: AttendanceReportRequest) {
-  if (header) {
-    const encodedMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
-    if (encodedMatch?.[1]) {
-      try {
-        return decodeURIComponent(encodedMatch[1].trim());
-      } catch {
-        // Fall back to the regular filename form below.
-      }
-    }
-
-    const filenameMatch = header.match(/filename=(?:"([^"]+)"|([^;]+))/i);
-    const filename = filenameMatch?.[1] ?? filenameMatch?.[2];
-    if (filename?.trim()) return filename.trim();
-  }
-
-  const suffix = request.reportType === "person" ? `-${request.employeeId}` : "";
-  return `attendance-${request.month}${suffix}.pdf`;
+function statusLabel(status: string) {
+  return status === "present" ? "Present" : status === "on_leave" ? "On Leave" : status;
 }
 
 export async function downloadAttendanceReport(
-  request: AttendanceReportRequest,
+  request: AttendanceReportRequest
 ): Promise<void> {
   if (!MONTH_PATTERN.test(request.month)) {
     throw new Error("Select a valid attendance month before downloading.");
   }
-
   if (request.reportType === "person" && !request.employeeId.trim()) {
     throw new Error("Employee ID is required for a person attendance report.");
   }
 
-  const parameters = new URLSearchParams({
-    reportType: request.reportType,
+  // 1) Pull the attendance rows for the month (optionally one employee).
+  const { attendance } = await getAttendanceList({
     month: request.month,
+    ...(request.reportType === "person" ? { employeeId: request.employeeId } : {}),
   });
-  if (request.reportType === "person") {
-    parameters.set("employeeId", request.employeeId);
-  }
 
-  const url = `${getFunctionsBaseUrl()}/downloadAttendanceReport?${parameters.toString()}`;
-
-  // This is an HTTP function, so the Firebase client SDK does not attach auth
-  // automatically. Force-refresh before every download, then retry one 401
-  // with another freshly issued token in case the first token was revoked or
-  // expired while the request was in flight.
-  let response = await fetchAttendanceReport(url, true);
-
-  if (response.status === 401) {
-    response = await fetchAttendanceReport(url, true);
-    if (response.status === 401) {
-      const message = await readErrorMessage(response);
-      redirectToLogin();
-      throw new Error(message);
-    }
-  }
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-
+  // 2) Map employee IDs -> display names.
+  const nameById = new Map<string, string>();
   try {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = getDownloadFilename(
-      response.headers.get("content-disposition"),
-      request,
-    );
-    anchor.style.display = "none";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(objectUrl);
+    const { employees } = await getEmployees();
+    for (const e of employees) {
+      nameById.set(
+        e.id,
+        (e as { fullName?: string; displayName?: string }).fullName ||
+          (e as { displayName?: string }).displayName ||
+          e.id
+      );
+    }
+  } catch {
+    // Names are best-effort; fall back to IDs.
   }
+
+  const rows = [...attendance].sort((a, b) => {
+    const byName = (nameById.get(a.employeeId) || a.employeeId).localeCompare(
+      nameById.get(b.employeeId) || b.employeeId
+    );
+    return byName !== 0 ? byName : (a.date || "").localeCompare(b.date || "");
+  });
+
+  // 3) Build the PDF.
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const marginX = 40;
+  let y = 54;
+
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(16);
+  pdf.text("Belt-Kit — Attendance Report", marginX, y);
+  y += 22;
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(11);
+  pdf.text(`Month: ${request.month}`, marginX, y);
+  y += 16;
+  if (request.reportType === "person") {
+    const who = nameById.get(request.employeeId) || request.employeeId;
+    pdf.text(`Employee: ${who}`, marginX, y);
+    y += 16;
+  }
+  const present = rows.filter((r) => r.status === "present").length;
+  const leave = rows.filter((r) => r.status === "on_leave").length;
+  pdf.text(`Records: ${rows.length}   Present: ${present}   On Leave: ${leave}`, marginX, y);
+  y += 24;
+
+  // Table header.
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10);
+  const colEmployee = marginX;
+  const colDate = marginX + 220;
+  const colStatus = marginX + 340;
+  const colNote = marginX + 430;
+  pdf.text("Employee", colEmployee, y);
+  pdf.text("Date", colDate, y);
+  pdf.text("Status", colStatus, y);
+  pdf.text("Note", colNote, y);
+  y += 8;
+  pdf.setDrawColor(180);
+  pdf.line(marginX, y, pageWidth - marginX, y);
+  y += 14;
+
+  pdf.setFont("helvetica", "normal");
+  const pageBottom = pdf.internal.pageSize.getHeight() - 40;
+
+  if (rows.length === 0) {
+    pdf.text("No attendance records for this period.", marginX, y);
+  }
+
+  for (const r of rows as Attendance[]) {
+    if (y > pageBottom) {
+      pdf.addPage();
+      y = 54;
+    }
+    const name = nameById.get(r.employeeId) || r.employeeId;
+    pdf.text(String(name).slice(0, 34), colEmployee, y);
+    pdf.text(r.date || "", colDate, y);
+    pdf.text(statusLabel(r.status), colStatus, y);
+    pdf.text(String(r.note || "").slice(0, 30), colNote, y);
+    y += 16;
+  }
+
+  const suffix = request.reportType === "person" ? `-${request.employeeId}` : "";
+  pdf.save(`attendance-${request.month}${suffix}.pdf`);
 }
 
 export default { downloadAttendanceReport };

@@ -47,6 +47,7 @@ import {
 export default function JobCardsPage() {
   const { branchId, role } = useAuth();
   const router = useRouter();
+  const today = new Date().toISOString().split("T")[0];
   const { data: allJobs, loading, error } = useCollection<JobCard>("jobCards");
 const jobs =
 (
@@ -265,6 +266,19 @@ const [promisedDate, setPromisedDate] = useState("");
     },
   ];
 
+
+  function isPastDate(date: string) {
+  if (!date) return false;
+
+  const selected = new Date(date);
+  const today = new Date();
+
+  today.setHours(0, 0, 0, 0);
+  selected.setHours(0, 0, 0, 0);
+
+  return selected < today;
+}
+
 async function handleCreate(form: FormData) {
   if (!branchId) return;
 
@@ -272,6 +286,39 @@ async function handleCreate(form: FormData) {
 
   const start = String(form.get("startDate") || "");
   const promised = String(form.get("promisedEndDate") || "");
+
+  if (isPastDate(start)) {
+  notify(
+    "Start date cannot be a past date.",
+    "error"
+  );
+  setSaving(false);
+  return;
+}
+
+if (isPastDate(promised)) {
+  notify(
+    "Promised end date cannot be a past date.",
+    "error"
+  );
+  setSaving(false);
+  return;
+}
+
+
+if (start && promised) {
+  const startDate = new Date(start);
+  const promisedDate = new Date(promised);
+
+  if (promisedDate < startDate) {
+    notify(
+      "Promised end date cannot be before start date.",
+      "error"
+    );
+    setSaving(false);
+    return;
+  }
+}
 
   const payload = {
     customerId: String(form.get("customerId") || ""),
@@ -587,20 +634,21 @@ useEffect(() => {
       )}
 
       <Modal
-        open={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          setSelectedCustomer("");
-        }}
-        title="New Job Card"
-      >
+  open={modalOpen}
+  onClose={() => {
+    setModalOpen(false);
+    setSelectedCustomer("");
+  }}
+  title="New Job Card"
+  size="lg"
+>
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleCreate(new FormData(e.currentTarget));
-          }}
-          className="space-y-4"
-        >
+  onSubmit={(e) => {
+    e.preventDefault();
+    handleCreate(new FormData(e.currentTarget));
+  }}
+  className="max-h-[75vh] overflow-y-auto space-y-4 pr-2"
+>
           <Field label="Customer" required>
             <select
               name="customerId"
@@ -813,6 +861,7 @@ prev.filter(id=>id!==t.id)
 <input
   name="startDate"
   type="date"
+  min={today}
   className="input-luxe"
   value={startDate}
   onChange={(e) => {
@@ -834,11 +883,9 @@ prev.filter(id=>id!==t.id)
 <input
   name="promisedEndDate"
   type="date"
+  min={startDate || today}
   className="input-luxe"
   value={promisedDate}
-  onChange={(e) =>
-    setPromisedDate(e.target.value)
-  }
 />
 
 </Field>
@@ -866,8 +913,13 @@ prev.filter(id=>id!==t.id)
             />
           </Field>
           <Field label="Scheduled date" hint="Optional — shows on the dashboard calendar.">
-            <input name="scheduledDate" type="date" className="input-luxe" />
-          </Field>
+  <input
+    name="scheduledDate"
+    type="date"
+    min={today}
+    className="input-luxe"
+  />
+</Field>
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"

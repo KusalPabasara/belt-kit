@@ -43,6 +43,19 @@ export default function CustomersPage() {
 
   const canEdit = role === "owner" || role === "manager" || role === "advisor";
 
+  const validateName = (name:string) => {
+  return /^[A-Za-z\s]+$/.test(name);
+};
+
+const validatePhone = (phone:string) => {
+  return /^[0-9]{10}$/.test(phone);
+};
+
+const validateEmail = (email:string) => {
+  if (!email) return true; // optional
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
+
   async function doDelete(id: string) {
     try {
       // Delete the customer and cascade-delete their vehicles. Job cards are
@@ -154,10 +167,55 @@ export default function CustomersPage() {
       segment: String(form.get("segment") || "walkin"),
     };
     if (!payload.displayName || !payload.phone) {
-      notify("Name and phone are required.", "error");
-      setSaving(false);
-      return;
-    }
+
+  notify(
+    "Name and phone are required.",
+    "error"
+  );
+
+  setSaving(false);
+  return;
+
+}
+
+
+if(!validateName(payload.displayName)){
+
+  notify(
+    "Name should contain only letters and spaces.",
+    "error"
+  );
+
+  setSaving(false);
+  return;
+
+}
+
+
+if(!validatePhone(payload.phone)){
+
+  notify(
+    "Phone number must contain exactly 10 digits.",
+    "error"
+  );
+
+  setSaving(false);
+  return;
+
+}
+
+
+if(!validateEmail(payload.email ?? "")){
+
+  notify(
+    "Please enter a valid email address.",
+    "error"
+  );
+
+  setSaving(false);
+  return;
+
+}
     try {
       if (editing) {
         await updateDocById("customers", editing.id, payload);
@@ -283,29 +341,43 @@ export default function CustomersPage() {
         >
           <Field label="Full name" required>
             <input
-              name="displayName"
-              defaultValue={editing?.displayName}
-              className="input-luxe"
-              placeholder="e.g. Nimal Perera"
-            />
+  name="displayName"
+  defaultValue={editing?.displayName}
+  className="input-luxe"
+  placeholder="e.g. Nimal Perera"
+  onChange={(e) => {
+    e.target.value = e.target.value.replace(
+      /[^A-Za-z\s]/g,
+      ""
+    );
+  }}
+/>
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Phone" required>
               <input
-                name="phone"
-                defaultValue={editing?.phone}
-                className="input-luxe"
-                placeholder="07X XXX XXXX"
-              />
+  name="phone"
+  type="tel"
+  defaultValue={editing?.phone}
+  className="input-luxe"
+  placeholder="0712345678"
+  maxLength={10}
+  onChange={(e) => {
+    e.target.value = e.target.value.replace(
+      /[^0-9]/g,
+      ""
+    );
+  }}
+/>
             </Field>
-            <Field label="Email">
+            <Field label="Email" required>
               <input
-                name="email"
-                type="email"
-                defaultValue={editing?.email}
-                className="input-luxe"
-                placeholder="optional"
-              />
+  name="email"
+  type="email"
+  defaultValue={editing?.email}
+  className="input-luxe"
+ 
+/>
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

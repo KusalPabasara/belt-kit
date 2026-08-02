@@ -2,107 +2,151 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
+
 import {
   ClipboardCheck,
   Car,
   User,
-  CalendarCheck
+  CalendarCheck,
+  ShieldCheck,
 } from "lucide-react";
 
 import { useCollection } from "@/lib/useCollection";
+
 import {
   JobCard,
   Customer,
   Vehicle,
-  ServiceType
+  ServiceType,
+  InsuranceClaim,
 } from "@/lib/models";
 
 import {
   PageHeader,
   EmptyState,
-  Badge
+  Badge,
 } from "@/components/ui";
 
 import {
   formatDate,
-  formatMoney
+  formatMoney,
 } from "@/lib/format";
 
-import { JOB_STATUS_META } from "@/lib/models";
 
 
-export default function FinishedJobsPage(){
+export default function FinishedJobsPage() {
+
 
 const {data:jobs,loading}=useCollection<JobCard>(
  "jobCards"
 );
 
+
 const {data:customers}=useCollection<Customer>(
  "customers"
 );
+
 
 const {data:vehicles}=useCollection<Vehicle>(
  "vehicles"
 );
 
+
 const {data:services}=useCollection<ServiceType>(
  "services"
 );
 
-
+const {data:insuranceClaims}=useCollection<InsuranceClaim>(
+ "insuranceClaims"
+);
 
 const finishedJobs = useMemo(()=>{
 
 return jobs
 .filter(
- j=>j.status==="delivered" && !j.archived
+ j =>
+ j.status === "delivered" &&
+ !j.archived
 )
 .sort(
 (a,b)=>
-(b.actualEndDate?.toMillis()??0)
+(b.actualEndDate?.toMillis() ?? 0)
 -
-(a.actualEndDate?.toMillis()??0)
+(a.actualEndDate?.toMillis() ?? 0)
 );
+
 
 },[jobs]);
 
 
 
+
+
 function customerName(id:string){
 
-return customers.find(c=>c.id===id)
-?.displayName ?? "-";
+return (
+customers.find(c=>c.id===id)
+?.displayName
+??
+"-"
+);
 
 }
 
 
+
+
+
 function vehicleName(id:string){
 
-const v=vehicles.find(v=>v.id===id);
+const vehicle =
+vehicles.find(
+v=>v.id===id
+);
 
-return v
+
+return vehicle
 ?
-`${v.make} ${v.model} · ${v.plateNumber}`
+`${vehicle.make} ${vehicle.model} · ${vehicle.plateNumber}`
 :
 "-";
 
 }
 
 
-function serviceNames(ids?: string[]){
+
+
+
+function serviceNames(ids?:string[]){
 
 return services
-.filter(s => (ids ?? []).includes(s.id))
-.map(s => s.name)
-.join(", ") || "-";
+.filter(
+s=>(ids ?? []).includes(s.id)
+)
+.map(
+s=>s.name
+)
+.join(", ")
+||
+"-";
 
 }
 
+
+function insuranceClaimForJob(jobId:string){
+
+  return insuranceClaims.find(
+    claim =>
+      claim.jobCardId === jobId
+  );
+
+}
 
 
 return (
 
 <div className="mx-auto max-w-7xl">
+
 
 <PageHeader
 
@@ -116,10 +160,14 @@ icon={ClipboardCheck}
 
 
 
+
 {
 loading ?
 
-<p>Loading...</p>
+<p>
+Loading...
+</p>
+
 
 
 :
@@ -138,7 +186,9 @@ hint="Delivered jobs will appear here."
 />
 
 
+
 :
+
 
 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 
@@ -147,18 +197,28 @@ hint="Delivered jobs will appear here."
 finishedJobs.map(job=>(
 
 
-<Link
+<div
 
 key={job.id}
-
-href={`/dashboard/job-cards/${job.id}`}
 
 className="card p-5 hover:shadow-luxe"
 
 >
 
 
+
+<Link
+
+href={`/dashboard/job-cards/${job.id}`}
+
+className="block"
+
+>
+
+
+
 <div className="flex justify-between">
+
 
 <Badge tone="burgundy">
 
@@ -170,11 +230,15 @@ Delivered
 </div>
 
 
+
+
 <h3 className="mt-3 font-semibold">
 
 {job.complaint}
 
 </h3>
+
+
 
 
 
@@ -190,6 +254,8 @@ Delivered
 </p>
 
 
+
+
 <p className="flex gap-2">
 
 <Car size={15}/>
@@ -197,6 +263,8 @@ Delivered
 {vehicleName(job.vehicleId)}
 
 </p>
+
+
 
 
 
@@ -208,26 +276,43 @@ Delivered
 
 
 
+
+
 <p className="flex gap-2">
+
 
 <CalendarCheck size={15}/>
 
+
 Completed:
+
+{" "}
 
 {
 job.actualEndDate
+
 ?
+
 formatDate(job.actualEndDate)
+
 :
+
 "-"
+
 }
 
+
 </p>
+
+
+
 
 
 <p className="font-semibold text-ink">
 
 Final Bill:
+
+{" "}
 
 {
 formatMoney(job.totalMinor)
@@ -237,10 +322,89 @@ formatMoney(job.totalMinor)
 
 
 
+
 </div>
 
 
 </Link>
+
+
+
+
+
+{
+  insuranceClaimForJob(job.id ?? "")
+  ?
+
+  <Link
+
+    href={`/dashboard/insurance/${insuranceClaimForJob(job.id ?? "")?.id}`}
+
+    className="
+      mt-5
+      flex
+      items-center
+      justify-center
+      gap-2
+      rounded-xl
+      border
+      border-green-300
+      px-3
+      py-2
+      text-sm
+      text-green-700
+      transition
+      hover:bg-green-50
+    "
+
+  >
+
+    <ShieldCheck size={15}/>
+
+    View Insurance Claim
+
+  </Link>
+
+
+  :
+
+
+  <Link
+
+    href={`/dashboard/insurance/create?jobId=${job.id}`}
+
+    className="
+      mt-5
+      flex
+      items-center
+      justify-center
+      gap-2
+      rounded-xl
+      border
+      border-burgundy-300
+      px-3
+      py-2
+      text-sm
+      text-burgundy-700
+      transition
+      hover:bg-burgundy-50
+    "
+
+  >
+
+    <ShieldCheck size={15}/>
+
+    Add Insurance Claim
+
+  </Link>
+
+}
+
+
+
+
+
+</div>
 
 
 ))
@@ -250,11 +414,13 @@ formatMoney(job.totalMinor)
 
 </div>
 
+
 }
 
 
 
 </div>
+
 
 )
 

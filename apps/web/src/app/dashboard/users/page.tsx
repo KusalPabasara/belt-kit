@@ -12,6 +12,8 @@ import {
   ShieldCheck,
   Loader2,
   Info,
+  UserX,
+  UserCheck,
 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { useAuth, Role } from "@/lib/auth-context";
@@ -47,8 +49,60 @@ export default function UsersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
+  const [draftEmail, setDraftEmail] = useState("");
 
   const canAdd = canManageUsers(role);
+  const validateName = (name: string) => {
+  return /^[A-Za-z\s]+$/.test(name.trim());
+};
+
+async function reactivateUser(id:string){
+
+  try{
+
+    await updateDoc(
+      doc(db,"users",id),
+      {
+        active:true
+      }
+    );
+
+    notify("Member reactivated.");
+
+  }catch{
+
+    notify(
+      "Could not reactivate member.",
+      "error"
+    );
+
+  }
+
+}
+
+async function deactivateUser(id:string){
+
+  try{
+
+    await updateDoc(
+      doc(db,"users",id),
+      {
+        active:false
+      }
+    );
+
+    notify("Member deactivated.");
+
+  }catch{
+
+    notify(
+      "Could not deactivate member.",
+      "error"
+    );
+
+  }
+
+}
 
   async function handleAddMember(form: FormData) {
     setAddBusy(true);
@@ -57,11 +111,29 @@ export default function UsersPage() {
     const email = String(form.get("email") || "").trim();
     const password = String(form.get("password") || "");
     const newRole = String(form.get("role") || "technician") as Role;
-    if (!email || password.length < 6) {
-      setAddErr("Email and a password of at least 6 characters are required.");
-      setAddBusy(false);
-      return;
-    }
+    if (!name) {
+  setAddErr("Name is required.");
+  setAddBusy(false);
+  return;
+}
+
+
+if (!validateName(name)) {
+  setAddErr(
+    "Name should contain only letters and spaces."
+  );
+  setAddBusy(false);
+  return;
+}
+
+
+if (!email || password.length < 6) {
+  setAddErr(
+    "Email and a password of at least 6 characters are required."
+  );
+  setAddBusy(false);
+  return;
+}
     try {
       await createStaffMember({ name, email, password, role: newRole, branchId: "main" });
       notify("Member added. They can sign in now.");
@@ -84,7 +156,12 @@ export default function UsersPage() {
     const unsub = onSnapshot(
       collection(db, "users"),
       (snap) => {
-        setRows(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserRow, "id">) })));
+        setRows(
+  snap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<UserRow, "id">)
+  }))
+);
         setLoading(false);
       },
       () => setLoading(false)
@@ -93,28 +170,56 @@ export default function UsersPage() {
   }, []);
 
   function startEdit(row: UserRow) {
-    setEditingId(row.id);
-    setDraftName(row.displayName);
-    setDraftRole(row.role);
-    setNotice(null);
-  }
+  setEditingId(row.id);
+  setDraftName(row.displayName);
+  setDraftEmail(row.email);
+  setDraftRole(row.role);
+  setNotice(null);
+}
 
   async function saveEdit(row: UserRow) {
-    setSavingId(row.id);
-    setNotice(null);
-    try {
-      await updateDoc(doc(db, "users", row.id), { displayName: draftName, role: draftRole });
-      if (draftRole !== row.role) {
-        setNotice("Role updated. The user should sign out and back in to refresh their access.");
-      }
-      setEditingId(null);
-    } catch {
-      setNotice("Could not save. You may not have permission, or you're offline.");
-    } finally {
-      setSavingId(null);
-    }
+
+  if (!draftName.trim()) {
+    setNotice("Name is required.");
+    return;
   }
 
+  if (!validateName(draftName)) {
+    setNotice("Name should contain only letters and spaces.");
+    return;
+  }
+
+  if (!draftEmail.trim()) {
+    setNotice("Email is required.");
+    return;
+  }
+
+  setSavingId(row.id);
+  setNotice(null);
+
+  try {
+
+    await updateDoc(
+      doc(db, "users", row.id),
+      {
+        displayName: draftName.trim(),
+        email: draftEmail.trim(),
+        role: draftRole
+      }
+    );
+
+    setEditingId(null);
+
+  } catch {
+
+    setNotice("Could not save changes.");
+
+  } finally {
+
+    setSavingId(null);
+
+  }
+}
   const canEdit = role === "owner" || role === "manager" || role === "advisor";
 
   return (
@@ -208,15 +313,31 @@ export default function UsersPage() {
                   <div>
                     {editingId === row.id ? (
                       <input
-                        value={draftName}
-                        onChange={(e) => setDraftName(e.target.value)}
-                        className="input-luxe py-1.5 text-sm"
-                        autoFocus
-                      />
+ value={draftName}
+ onChange={(e) =>
+   setDraftName(
+     e.target.value.replace(
+       /[^A-Za-z\s]/g,
+       ""
+     )
+   )
+ }
+ className="input-luxe py-1.5 text-sm"
+ autoFocus
+/>
                     ) : (
                       <p className="font-medium text-ink">{row.displayName || "Unnamed"}</p>
                     )}
-                    <p className="text-xs text-ink-faint">{row.email}</p>
+                    {editingId === row.id ? (
+  <input
+    value={draftEmail}
+    onChange={(e)=>setDraftEmail(e.target.value)}
+    className="input-luxe py-1.5 text-sm mt-2"
+    type="email"
+  />
+) : (
+  <p className="text-xs text-ink-faint">{row.email}</p>
+)}
                   </div>
                 </div>
 
@@ -232,9 +353,19 @@ export default function UsersPage() {
                       ))}
                     </select>
                   ) : (
-                    <span className="rounded-full bg-burgundy-50 px-3 py-1 text-xs font-medium text-burgundy-600">
-                      {ROLE_META[row.role]?.label ?? row.role}
-                    </span>
+                    <div className="flex flex-col gap-2">
+
+<span className="rounded-full bg-burgundy-50 px-3 py-1 text-xs font-medium text-burgundy-600">
+  {ROLE_META[row.role]?.label ?? row.role}
+</span>
+
+{row.active === false && (
+  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-500">
+    Deactivated
+  </span>
+)}
+
+</div>
                   )}
 
                   {canEdit &&
@@ -257,14 +388,48 @@ export default function UsersPage() {
                         </button>
                       </div>
                     ) : (
-                      <button
-                        onClick={() => startEdit(row)}
-                        className="rounded-lg border border-line p-2 text-ink-soft transition hover:border-burgundy-300 hover:text-burgundy-600"
-                        aria-label="Edit"
-                      >
-                        <Pencil size={16} />
-                      </button>
-                    ))}
+  <>
+    <button
+      onClick={() => {
+  if(row.active !== false){
+    startEdit(row);
+  }
+}}
+      className="rounded-lg border border-line p-2 text-ink-soft transition hover:border-burgundy-300 hover:text-burgundy-600"
+      aria-label="Edit"
+    >
+      <Pencil size={16} />
+    </button>
+
+    {row.active === false ? (
+
+<button
+  onClick={() => reactivateUser(row.id)}
+  className="rounded-lg border border-line p-2 text-ink-soft transition hover:border-green-300 hover:text-green-600"
+  aria-label="Reactivate"
+  title="Reactivate member"
+>
+  <UserCheck size={16}/>
+</button>
+
+) : (
+
+<button
+  onClick={()=>{
+    if(confirm("Deactivate this member?")){
+      deactivateUser(row.id);
+    }
+  }}
+  className="rounded-lg border border-line p-2 text-ink-soft transition hover:border-red-300 hover:text-red-600"
+  aria-label="Deactivate"
+  title="Deactivate member"
+>
+  <UserX size={16}/>
+</button>
+
+)}
+  </>
+))}
                 </div>
               </motion.div>
             ))}
@@ -289,8 +454,19 @@ export default function UsersPage() {
           onSubmit={(e) => { e.preventDefault(); handleAddMember(new FormData(e.currentTarget)); }}
           className="space-y-4"
         >
-          <Field label="Full name">
-            <input name="name" className="input-luxe" placeholder="e.g. Kasun Silva" />
+          <Field label="Full name" required>
+            <input
+ name="name"
+ className="input-luxe"
+ placeholder="e.g. Kasun Silva"
+ onChange={(e)=>{
+   e.target.value =
+     e.target.value.replace(
+       /[^A-Za-z\s]/g,
+       ""
+     );
+ }}
+/>
           </Field>
           <Field label="Email (this is their login)" required>
             <input name="email" type="email" className="input-luxe" placeholder="person@garage.lk" />

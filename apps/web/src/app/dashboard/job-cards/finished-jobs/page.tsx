@@ -31,10 +31,17 @@ import {
   formatDate,
   formatMoney,
 } from "@/lib/format";
+import { useAuth } from "@/lib/auth-context";
+import {
+  canManageInsuranceCases,
+  canViewInsurance,
+} from "@/lib/permissions";
 
 
 
 export default function FinishedJobsPage() {
+
+const { role } = useAuth();
 
 
 const {data:jobs,loading}=useCollection<JobCard>(
@@ -333,7 +340,7 @@ formatMoney(job.totalMinor)
 
 
 {
-  insuranceClaimForJob(job.id ?? "")
+  canViewInsurance(role) && insuranceClaimForJob(job.id ?? "")
   ?
 
   <Link
@@ -366,7 +373,8 @@ formatMoney(job.totalMinor)
   </Link>
 
 
-  :
+  : canManageInsuranceCases(role)
+  ?
 
 
   <Link
@@ -397,6 +405,8 @@ formatMoney(job.totalMinor)
     Add Insurance Claim
 
   </Link>
+
+  : null
 
 }
 

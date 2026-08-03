@@ -211,8 +211,306 @@ service cloud.firestore {
     }
     // Insurance claims
     match /insuranceClaims/{id} {
-      allow read: if isStaff();
-      allow create, update, delete: if isTeam();
+      function isInsuranceManager() {
+        return myRole() in ['owner', 'manager', 'advisor'];
+      }
+
+      function isInsuranceAccountant() {
+        return myRole() == 'accountant';
+      }
+
+      function validIsoDate(value) {
+        return value is timestamp
+               || value == null
+               || (value is string
+                   && (value == ''
+                       || value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')));
+      }
+
+      function validClaimShape(data) {
+        return data.keys().hasAll([
+                 'schemaVersion', 'branchId', 'jobCardId', 'customerId',
+                 'vehicleId', 'invoiceId', 'finalInvoiceId', 'companyName',
+                 'policyNumber', 'claimNumber', 'currency', 'accidentDate',
+                 'paymentRoute',
+                 'caseStage', 'approvalStatus', 'releaseStatus',
+                 'settlementStatus', 'documentStatus', 'documentCount',
+                 'verifiedDocumentCount', 'assessorName', 'assessmentDate',
+                 'assessmentReference', 'finalInvoiceAmountMinor',
+                 'finalInvoiceTotalMinor', 'claimAmountMinor',
+                 'assessedAmountMinor', 'approvedAmountMinor',
+                 'insurerResponsibilityMinor', 'customerResponsibilityMinor',
+                 'insurerReceivedMinor', 'customerReceivedMinor',
+                 'receivedAmountMinor', 'writeOffMinor', 'releaseOrderNumber',
+                 'releaseOrderDate', 'expectedSettlementDate', 'releasedAt',
+                 'releasedByUid', 'status', 'notes', 'archived',
+                 'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+               ])
+               && data.keys().hasOnly([
+                 'schemaVersion', 'branchId', 'jobCardId', 'customerId',
+                 'vehicleId', 'invoiceId', 'finalInvoiceId', 'companyName',
+                 'policyNumber', 'claimNumber', 'currency', 'paymentRoute',
+                 'caseStage', 'approvalStatus', 'releaseStatus',
+                 'settlementStatus', 'documentStatus', 'documentCount',
+                 'verifiedDocumentCount', 'assessorName', 'assessmentReference',
+                 'accidentDate', 'assessmentDate', 'quantumEstablishedAt',
+                 'dischargeDocumentsReceivedAt', 'identityVerifiedAt',
+                 'expectedSettlementDate', 'regulatorySettlementDate',
+                 'finalInvoiceAmountMinor', 'finalInvoiceTotalMinor',
+                 'claimAmountMinor', 'assessedAmountMinor',
+                 'approvedAmountMinor', 'insurerResponsibilityMinor',
+                 'insurerReceivedMinor', 'customerResponsibilityMinor',
+                 'customerReceivedMinor', 'receivedAmountMinor',
+                 'writeOffMinor', 'releaseOrderNumber', 'releaseOrderDate',
+                 'releasedAt', 'releasedByUid', 'status', 'notes', 'archived',
+                 'insurerPaymentMethod', 'insurerPaymentReference',
+                 'customerPaymentReference', 'chequeStatus',
+                 'chequeReceivedAt', 'chequeClearedAt', 'settlementNotes',
+                 'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt'
+               ]);
+      }
+
+      function validClaimTypes(data) {
+        return data.schemaVersion == 2
+               && data.branchId is string && data.branchId.size() > 0
+               && data.jobCardId is string && data.jobCardId.size() > 0
+               && data.customerId is string && data.customerId.size() > 0
+               && data.vehicleId is string && data.vehicleId.size() > 0
+               && (data.invoiceId == null || data.invoiceId is string)
+               && (data.finalInvoiceId == null || data.finalInvoiceId is string)
+               && data.invoiceId == data.finalInvoiceId
+               && data.companyName is string && data.companyName.size() > 0
+               && data.policyNumber is string && data.claimNumber is string
+               && data.currency is string && data.assessorName is string
+               && data.assessmentReference is string
+               && data.releaseOrderNumber is string && data.notes is string
+               && data.archived is bool
+               && data.createdByUid is string && data.createdByUid.size() > 0
+               && data.updatedByUid is string && data.updatedByUid.size() > 0
+               && data.createdAt is timestamp && data.updatedAt is timestamp
+               && (data.releasedByUid == null || data.releasedByUid is string)
+               && (!data.keys().hasAny(['insurerPaymentReference'])
+                   || data.insurerPaymentReference is string)
+               && (!data.keys().hasAny(['customerPaymentReference'])
+                   || data.customerPaymentReference is string)
+               && (!data.keys().hasAny(['settlementNotes'])
+                   || data.settlementNotes is string);
+      }
+
+      function validClaimDates(data) {
+        return validIsoDate(data.accidentDate)
+               && validIsoDate(data.assessmentDate)
+               && validIsoDate(data.releaseOrderDate)
+               && validIsoDate(data.expectedSettlementDate)
+               && validIsoDate(data.releasedAt)
+               && (!data.keys().hasAny(['regulatorySettlementDate'])
+                   || validIsoDate(data.regulatorySettlementDate))
+               && (!data.keys().hasAny(['quantumEstablishedAt'])
+                   || validIsoDate(data.quantumEstablishedAt))
+               && (!data.keys().hasAny(['dischargeDocumentsReceivedAt'])
+                   || validIsoDate(data.dischargeDocumentsReceivedAt))
+               && (!data.keys().hasAny(['identityVerifiedAt'])
+                   || data.identityVerifiedAt == null
+                   || data.identityVerifiedAt is timestamp)
+               && (!data.keys().hasAny(['chequeReceivedAt'])
+                   || validIsoDate(data.chequeReceivedAt))
+               && (!data.keys().hasAny(['chequeClearedAt'])
+                   || validIsoDate(data.chequeClearedAt));
+      }
+
+      function validClaimEnums(data) {
+        return data.paymentRoute in ['insurer_direct', 'customer_direct', 'split']
+               && data.caseStage in [
+                 'intake', 'documents', 'assessment', 'approval', 'repair',
+                 'final_invoice', 'release', 'settlement', 'closed'
+               ]
+               && data.approvalStatus in [
+                 'pending', 'partly_approved', 'partially_approved', 'approved',
+                 'rejected', 'disputed'
+               ]
+               && data.releaseStatus in [
+                 'blocked', 'eligible', 'release_order_verified', 'authorized',
+                 'released'
+               ]
+               && data.settlementStatus in [
+                 'not_due', 'insurer_pending', 'customer_pending', 'part_paid',
+                 'overdue', 'disputed', 'reconciled'
+               ]
+               && data.status in ['pending', 'approved', 'received', 'rejected']
+               && data.documentStatus in [
+                 'not_started', 'incomplete', 'ready_for_review', 'verified'
+               ]
+               && (!data.keys().hasAny(['insurerPaymentMethod'])
+                   || data.insurerPaymentMethod in [
+                     'cash', 'cheque', 'bank_transfer', 'card', 'other'
+                   ])
+               && (!data.keys().hasAny(['chequeStatus'])
+                   || data.chequeStatus in [
+                     'not_applicable', 'expected', 'received', 'deposited',
+                     'cleared', 'bounced', 'reversed'
+                   ]);
+      }
+
+      function validClaimMoney(data) {
+        return data.finalInvoiceAmountMinor is int
+               && data.finalInvoiceAmountMinor >= 0
+               && data.finalInvoiceTotalMinor is int
+               && data.finalInvoiceTotalMinor >= 0
+               && data.finalInvoiceAmountMinor == data.finalInvoiceTotalMinor
+               && data.claimAmountMinor is int && data.claimAmountMinor >= 0
+               && data.assessedAmountMinor is int && data.assessedAmountMinor >= 0
+               && data.approvedAmountMinor is int && data.approvedAmountMinor >= 0
+               && data.insurerResponsibilityMinor is int
+               && data.insurerResponsibilityMinor >= 0
+               && data.customerResponsibilityMinor is int
+               && data.customerResponsibilityMinor >= 0
+               && data.insurerReceivedMinor is int
+               && data.insurerReceivedMinor >= 0
+               && data.customerReceivedMinor is int
+               && data.customerReceivedMinor >= 0
+               && data.receivedAmountMinor is int && data.receivedAmountMinor >= 0
+               && data.writeOffMinor is int && data.writeOffMinor >= 0
+               && data.receivedAmountMinor
+                  == data.insurerReceivedMinor + data.customerReceivedMinor
+               && data.insurerReceivedMinor <= data.insurerResponsibilityMinor
+               && data.customerReceivedMinor <= data.customerResponsibilityMinor
+               && data.insurerResponsibilityMinor
+                    + data.customerResponsibilityMinor + data.writeOffMinor
+                  == data.finalInvoiceTotalMinor
+               && data.documentCount is int && data.documentCount >= 0
+               && data.verifiedDocumentCount is int
+               && data.verifiedDocumentCount >= 0
+               && data.verifiedDocumentCount <= data.documentCount;
+      }
+
+      function validJobAndInvoiceLinks(data) {
+        let jobPath = /databases/$(database)/documents/jobCards/$(data.jobCardId);
+        let job = get(jobPath).data;
+        return id == data.jobCardId
+               && exists(jobPath)
+               && job.branchId == data.branchId
+               && job.customerId == data.customerId
+               && job.vehicleId == data.vehicleId
+               && job.status == 'delivered'
+               // The delivered Job Card already stores the frozen invoice link
+               // and total. Reusing that trusted record avoids a second rules
+               // read and keeps free-tier evaluation comfortably below limits.
+               && job.invoiceId == data.finalInvoiceId
+               && job.totalMinor == data.finalInvoiceTotalMinor;
+      }
+
+      function validClaimData(data) {
+        return validClaimShape(data)
+               && validClaimTypes(data)
+               && validClaimDates(data)
+               && validClaimEnums(data)
+               && validClaimMoney(data);
+      }
+
+      function validClaimCreate(data) {
+        // Check the cheap deterministic Job Card constraints first. Invalid
+        // document IDs and non-delivered jobs are rejected before evaluating
+        // the complete schema, keeping denied requests below the rules engine's
+        // expression limit on the Firebase free tier.
+        return validJobAndInvoiceLinks(data) && validClaimData(data);
+      }
+
+      function validSettlementUpdate(data) {
+        return data.settlementStatus in [
+                 'not_due', 'insurer_pending', 'customer_pending', 'part_paid',
+                 'overdue', 'disputed', 'reconciled'
+               ]
+               && data.insurerReceivedMinor is int
+               && data.insurerReceivedMinor >= 0
+               && data.insurerReceivedMinor <= data.insurerResponsibilityMinor
+               && data.customerReceivedMinor is int
+               && data.customerReceivedMinor >= 0
+               && data.customerReceivedMinor <= data.customerResponsibilityMinor
+               && data.receivedAmountMinor
+                  == data.insurerReceivedMinor + data.customerReceivedMinor
+               && data.status in ['pending', 'approved', 'received', 'rejected']
+               && validIsoDate(data.expectedSettlementDate)
+               && (!data.keys().hasAny(['insurerPaymentMethod'])
+                   || data.insurerPaymentMethod in [
+                     'cash', 'cheque', 'bank_transfer', 'card', 'other'
+                   ])
+               && (!data.keys().hasAny(['insurerPaymentReference'])
+                   || data.insurerPaymentReference is string)
+               && (!data.keys().hasAny(['customerPaymentReference'])
+                   || data.customerPaymentReference is string)
+               && (!data.keys().hasAny(['chequeStatus'])
+                   || data.chequeStatus in [
+                     'not_applicable', 'expected', 'received', 'deposited',
+                     'cleared', 'bounced', 'reversed'
+                   ])
+               && (!data.keys().hasAny(['chequeReceivedAt'])
+                   || validIsoDate(data.chequeReceivedAt))
+               && (!data.keys().hasAny(['chequeClearedAt'])
+                   || validIsoDate(data.chequeClearedAt))
+               && (!data.keys().hasAny(['settlementNotes'])
+                   || data.settlementNotes is string)
+               && (data.settlementStatus != 'reconciled'
+                   || (data.insurerReceivedMinor
+                         == data.insurerResponsibilityMinor
+                       && data.customerReceivedMinor
+                         == data.customerResponsibilityMinor));
+      }
+
+      function validManagerUpdate(data) {
+        // Existing v2 records already passed the full create validator. Updates
+        // re-check the editable business values while onlyChanged() protects
+        // identity, Job Card links, creator metadata and the schema shape.
+        return data.companyName is string && data.companyName.size() > 0
+               && data.policyNumber is string && data.claimNumber is string
+               && data.currency is string && data.assessorName is string
+               && data.assessmentReference is string
+               && data.releaseOrderNumber is string && data.notes is string
+               && (data.releasedByUid == null || data.releasedByUid is string)
+               && validClaimDates(data)
+               && validClaimEnums(data)
+               && validClaimMoney(data);
+      }
+
+      allow read: if isInsuranceManager() || isInsuranceAccountant();
+      allow create: if isInsuranceManager()
+                    && !exists(/databases/$(database)/documents/insuranceClaims/$(id))
+                    && request.resource.data.createdByUid == request.auth.uid
+                    && request.resource.data.updatedByUid == request.auth.uid
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time
+                    && validClaimCreate(request.resource.data);
+      allow update: if isInsuranceManager()
+                    && onlyChanged([
+                      'companyName', 'policyNumber', 'claimNumber', 'currency',
+                      'accidentDate', 'paymentRoute', 'caseStage',
+                      'approvalStatus', 'releaseStatus', 'settlementStatus',
+                      'assessorName', 'assessmentDate', 'assessmentReference',
+                      'claimAmountMinor', 'assessedAmountMinor',
+                      'approvedAmountMinor', 'insurerResponsibilityMinor',
+                      'customerResponsibilityMinor', 'insurerReceivedMinor',
+                      'customerReceivedMinor', 'receivedAmountMinor',
+                      'writeOffMinor', 'releaseOrderNumber', 'releaseOrderDate',
+                      'releasedAt', 'releasedByUid', 'expectedSettlementDate',
+                      'quantumEstablishedAt', 'dischargeDocumentsReceivedAt',
+                      'regulatorySettlementDate', 'status', 'notes',
+                      'updatedByUid', 'updatedAt'
+                    ])
+                    && request.resource.data.updatedByUid == request.auth.uid
+                    && request.resource.data.updatedAt == request.time
+                    && validManagerUpdate(request.resource.data);
+      allow update: if isInsuranceAccountant()
+                    && onlyChanged([
+                      'settlementStatus', 'insurerReceivedMinor',
+                      'customerReceivedMinor', 'receivedAmountMinor', 'status',
+                      'expectedSettlementDate', 'insurerPaymentMethod',
+                      'insurerPaymentReference', 'customerPaymentReference',
+                      'chequeStatus', 'chequeReceivedAt', 'chequeClearedAt',
+                      'settlementNotes', 'updatedByUid', 'updatedAt'
+                    ])
+                    && request.resource.data.updatedByUid == request.auth.uid
+                    && request.resource.data.updatedAt == request.time
+                    && validSettlementUpdate(request.resource.data);
+      allow delete: if false;
     }
 
     // ---- Billing ---------------------------------------------------------

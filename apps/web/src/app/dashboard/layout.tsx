@@ -52,7 +52,7 @@ const CORE_NAV: NavItem[] = [
   { href: "/dashboard/vehicles",   label: "Vehicles",       icon: Car,             roles: ["owner","manager","advisor","accountant"] },
   { href: "/dashboard/inventory",  label: "Inventory",      icon: Package,         roles: ["owner","manager","advisor"] },
   { href: "/dashboard/billing",    label: "Billing",        icon: Receipt,         roles: ["owner","manager","advisor","accountant"] },
-  { href: "/dashboard/insurance",  label: "Insurance",      icon: ShieldCheck,     roles: ["owner","manager","advisor"] },
+  { href: "/dashboard/insurance",  label: "Insurance",      icon: ShieldCheck,     roles: ["owner","manager","advisor","accountant"] },
   { href: "/dashboard/reports",    label: "Reports",        icon: BarChart3,       roles: ["owner","manager","advisor","accountant"] },
   { href: "/dashboard/employees",  label: "Employees",      icon: UserCog,         roles: ["owner","manager"] },
   { href: "/dashboard/employees/attendance", label: "Attendance", icon: CalendarCheck2, roles: ["owner","manager"] },
@@ -122,6 +122,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const visibleNav = CORE_NAV.filter((n) => !role || n.roles.includes(role));
+  const activeNavItem = visibleNav
+    .filter((item) =>
+      pathname === item.href ||
+      (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`))
+    )
+    .sort((left, right) => right.href.length - left.href.length)[0];
   const roleLabel  = role ? ROLE_META[role].label : "No role assigned";
   const initials   = (user.displayName ?? user.email ?? "?")[0]?.toUpperCase();
 
@@ -165,9 +171,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
         <nav className="flex-1 space-y-0.5 px-2 overflow-y-auto">
           {visibleNav.map((item) => {
-            const active =
-              pathname === item.href ||
-              (item.href !== "/dashboard" && pathname.startsWith(item.href));
+            const active = activeNavItem?.href === item.href;
             const Icon = item.icon;
             return (
               <Link
@@ -231,7 +235,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-2 text-xs text-ink-faint">
             <span className="font-semibold text-ink">Dashboard</span>
             <ChevronRight size={12} />
-            <span>{CORE_NAV.find((n) => n.href === pathname)?.label ?? "Overview"}</span>
+            <span>{activeNavItem?.label ?? "Overview"}</span>
           </div>
           <NotificationBell />
         </div>

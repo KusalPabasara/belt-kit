@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "ollama:check": "node scripts/check-ollama.mjs"
+    "test:unit": "node --experimental-strip-types --test src/lib/workflow-rules.test.mjs",
+    "test:e2e": "node scripts/test-browser-workflows.mjs",
+    "ollama:check": "node scripts/check-ollama.mjs",
+    "test:insurance-rules": "firebase emulators:exec --config ../../firebase.notifications-test.json --project belt-kit --only auth,firestore \"node scripts/test-insurance-rules.mjs\""
   },
   "dependencies": {
     "firebase": "10.14.1",

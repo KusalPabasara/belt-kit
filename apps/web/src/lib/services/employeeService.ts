@@ -44,6 +44,7 @@ type UpdateEmployeeParams = {
   employeeId: string;
   updates?: {
     fullName?: string;
+    role?: Role;
     phone?: string | null;
     salaryMinor?: number;
     joinDate?: string | null;
@@ -51,8 +52,6 @@ type UpdateEmployeeParams = {
     archived?: boolean;
   };
 };
-
-type AssignRoleParams = { employeeId: string; role: Role; branchId?: string };
 
 type CreatePaymentParams = {
   employeeId: string;
@@ -109,6 +108,7 @@ export async function updateEmployee(params: UpdateEmployeeParams) {
     payload.fullName = updates.fullName.trim();
     payload.displayName = updates.fullName.trim();
   }
+  if (updates.role !== undefined) payload.role = updates.role;
   if (updates.phone !== undefined) payload.phone = updates.phone ?? null;
   if (updates.salaryMinor !== undefined) payload.salaryMinor = updates.salaryMinor;
   if (updates.joinDate !== undefined) payload.joinDate = updates.joinDate ?? null;
@@ -116,15 +116,6 @@ export async function updateEmployee(params: UpdateEmployeeParams) {
   if (updates.archived !== undefined) payload.archived = updates.archived;
 
   await updateDoc(doc(db, "users", params.employeeId), payload);
-  return { ok: true };
-}
-
-/** Assign or change an employee's role. */
-export async function assignEmployeeRole(params: AssignRoleParams) {
-  await updateDoc(doc(db, "users", params.employeeId), {
-    role: params.role,
-    updatedAt: serverTimestamp(),
-  });
   return { ok: true };
 }
 
@@ -188,7 +179,6 @@ export async function getEmployeePaymentHistory(employeeId: string) {
 export default {
   createEmployee,
   updateEmployee,
-  assignEmployeeRole,
   getEmployees,
   createEmployeePayment,
   getEmployeePayments,

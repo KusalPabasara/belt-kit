@@ -266,8 +266,9 @@ export interface EmployeePayment extends BaseDoc {
 // ---- Attendance ------------------------------------------------------------
 
 export type AttendanceStatus =
-  | "PRESENT"
-  | "ON_LEAVE";
+  | "present"
+  | "absent"
+  | "on_leave";
 
 export interface Attendance {
   id: string;

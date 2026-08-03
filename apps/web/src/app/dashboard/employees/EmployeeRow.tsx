@@ -4,12 +4,11 @@ import React from "react";
 import { Employee } from "@/lib/models";
 import { formatMoney, formatDate, initials } from "@/lib/format";
 import { Badge } from "@/components/ui";
-import { Pencil, UserPlus, Wallet, Clock, Archive, ToggleLeft, ToggleRight } from "lucide-react";
+import { Pencil, Wallet, Clock, Archive, ToggleLeft, ToggleRight } from "lucide-react";
 
 export default function EmployeeRow({
   employee,
   onEdit,
-  onChangeRole,
   onArchive,
   onToggleStatus,
   onRecordPayment,
@@ -17,7 +16,6 @@ export default function EmployeeRow({
 }: {
   employee: Employee;
   onEdit?: (e: Employee) => void;
-  onChangeRole?: (e: Employee) => void;
   onArchive?: (e: Employee) => void;
   onToggleStatus?: (e: Employee) => void;
   onRecordPayment?: (e: Employee) => void;
@@ -62,13 +60,6 @@ export default function EmployeeRow({
             aria-label="Edit"
           >
             <Pencil size={16} />
-          </button>
-          <button
-            onClick={() => onChangeRole && onChangeRole(employee)}
-            className="rounded-lg border border-line p-2 text-ink-soft transition hover:border-burgundy-300 hover:text-burgundy-600"
-            aria-label="Change role"
-          >
-            <UserPlus size={16} />
           </button>
           <button
             onClick={() => onToggleStatus && onToggleStatus(employee)}

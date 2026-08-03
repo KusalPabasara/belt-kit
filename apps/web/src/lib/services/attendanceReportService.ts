@@ -18,7 +18,13 @@ export type AttendanceReportRequest =
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function statusLabel(status: string) {
-  return status === "present" ? "Present" : status === "on_leave" ? "On Leave" : status;
+  return status === "present"
+    ? "Present"
+    : status === "absent"
+      ? "Absent"
+      : status === "on_leave"
+        ? "On Leave"
+        : status;
 }
 
 export async function downloadAttendanceReport(
@@ -81,8 +87,9 @@ export async function downloadAttendanceReport(
     y += 16;
   }
   const present = rows.filter((r) => r.status === "present").length;
+  const absent = rows.filter((r) => r.status === "absent").length;
   const leave = rows.filter((r) => r.status === "on_leave").length;
-  pdf.text(`Records: ${rows.length}   Present: ${present}   On Leave: ${leave}`, marginX, y);
+  pdf.text(`Records: ${rows.length}   Present: ${present}   Absent: ${absent}   On Leave: ${leave}`, marginX, y);
   y += 24;
 
   // Table header.

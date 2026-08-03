@@ -10,7 +10,6 @@ import {
   Mail,
   Car,
   ClipboardList,
-  Plus,
   MessageSquare,
 } from "lucide-react";
 import { db } from "@/lib/firebase";
@@ -98,17 +97,9 @@ export default function CustomerDetailPage() {
 
       {/* Vehicles */}
       <section className="mb-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 font-serif text-xl font-semibold text-ink">
-            <Car size={20} className="text-rosegold-500" /> Vehicles
-          </h2>
-          <Link
-            href={`/dashboard/vehicles?customer=${id}`}
-            className="flex items-center gap-1 font-sans text-sm text-burgundy-600 hover:text-burgundy-700"
-          >
-            <Plus size={15} /> Add vehicle
-          </Link>
-        </div>
+        <h2 className="mb-3 flex items-center gap-2 font-serif text-xl font-semibold text-ink">
+          <Car size={20} className="text-rosegold-500" /> Vehicles
+        </h2>
         {vehicles.length === 0 ? (
           <div className="rounded-xl border border-dashed border-line bg-surface-muted/40 px-5 py-8 text-center font-sans text-sm text-ink-soft">
             No vehicles on file for this customer yet.

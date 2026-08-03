@@ -31,7 +31,8 @@ const READABLE: Record<Role, string[]> = {
   technician: ["jobCards", "jobCardLines", "vehicles", "parts", "branches", "assistantChats", "assistantMessages"],
   accountant: [
     "jobCards", "jobCardLines", "customers", "vehicles",
-    "parts", "invoices", "payments", "branches", "auditLog",
+    "parts", "stockMovements", "invoices", "payments", "branches", "auditLog",
+    "insuranceClaims",
   ],
   customer: ["invoices", "payments"],
   pending: [],
@@ -69,6 +70,16 @@ export const canDoFinancial = (r: Role | null) =>
 // Package 3 reports combine finance, completed jobs, customers, vehicles and
 // inventory. This deliberately matches the roles exposed in dashboard nav.
 export const canViewReports = canDoFinancial;
+
+// Insurance cases contain identity and settlement information. Technicians use
+// the linked Job Card for repair work and do not need access to this workspace.
+export const canViewInsurance = (r: Role | null) =>
+  r === "owner" || r === "manager" || r === "advisor" || r === "accountant";
+
+export const canManageInsuranceCases = isOps;
+
+export const canManageInsuranceSettlement = (r: Role | null) =>
+  r === "owner" || r === "manager" || r === "advisor" || r === "accountant";
 
 // Add staff members + assign roles: owner, manager, front-desk.
 export const canManageUsers = isOps;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal, Field, useToast } from "@/components/ui";
 import { Employee } from "@/lib/models";
 import { Role } from "@/lib/auth-context";
@@ -15,6 +15,21 @@ type Props = {
   onCancel: () => void;
 };
 
+function employeeJoinDate(employee?: Employee | null): string {
+  if (!employee?.joinDate) return "";
+  if (typeof employee.joinDate === "string") return employee.joinDate.slice(0, 10);
+
+  try {
+    const date = employee.joinDate.toDate();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  } catch {
+    return "";
+  }
+}
+
 export default function EmployeeForm({ mode, employee, open, onSuccess, onCancel }: Props) {
   const { notify } = useToast();
   const [fullName, setFullName] = useState(employee?.fullName ?? employee?.displayName ?? "");
@@ -23,21 +38,31 @@ export default function EmployeeForm({ mode, employee, open, onSuccess, onCancel
   const [role, setRole] = useState<Role>((employee?.role as Role) ?? ("technician" as Role));
   const [phone, setPhone] = useState(employee?.phone ?? "");
   const [salary, setSalary] = useState<string>(employee?.salaryMinor ? String((employee.salaryMinor ?? 0) / 100) : "0.00");
-  const [joinDate, setJoinDate] = useState<string>(() => {
-    if (!employee?.joinDate) return "";
-    if (typeof employee.joinDate === "string") return employee.joinDate;
-    try {
-      // Timestamp-like
-      return (employee.joinDate as any).toDate().toISOString().slice(0, 10);
-    } catch {
-      return "";
-    }
-  });
+  const [joinDate, setJoinDate] = useState<string>(() => employeeJoinDate(employee));
   const [active, setActive] = useState<boolean>(employee?.active ?? true);
   const [archived, setArchived] = useState<boolean>(employee?.archived ?? false);
 
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+
+    setFullName(employee?.fullName ?? employee?.displayName ?? "");
+    setEmail(employee?.email ?? "");
+    setPassword("");
+    setRole((employee?.role as Role) ?? "technician");
+    setPhone(employee?.phone ?? "");
+    setSalary(
+      employee?.salaryMinor !== undefined
+        ? (employee.salaryMinor / 100).toFixed(2)
+        : "0.00"
+    );
+    setJoinDate(employeeJoinDate(employee));
+    setActive(employee?.active ?? true);
+    setArchived(employee?.archived ?? false);
+    setErrors({});
+  }, [employee, open]);
 
   function validate() {
     const e: Record<string, string> = {};
@@ -74,6 +99,7 @@ export default function EmployeeForm({ mode, employee, open, onSuccess, onCancel
       } else {
         const updates: any = {
           fullName: fullName.trim(),
+          role,
           phone: phone.trim() || null,
           salaryMinor: toMinor(salary),
           joinDate: joinDate || null,

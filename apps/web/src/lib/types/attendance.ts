@@ -1,4 +1,4 @@
-export type AttendanceStatus = "present" | "on_leave";
+export type AttendanceStatus = "present" | "absent" | "on_leave";
 
 export type SerializedTimestamp = {
   seconds?: number;

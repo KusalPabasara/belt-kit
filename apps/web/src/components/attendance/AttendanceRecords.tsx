@@ -91,7 +91,13 @@ export function AttendanceRecords({ records, employees, loading, error, download
 }
 
 function Status({ status }: { status: Attendance["status"] }) {
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${status === "present" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{status === "present" ? "Present" : "On leave"}</span>;
+  const style = status === "present"
+    ? "bg-emerald-50 text-emerald-700"
+    : status === "absent"
+      ? "bg-rose-50 text-rose-700"
+      : "bg-amber-50 text-amber-700";
+  const label = status === "present" ? "Present" : status === "absent" ? "Absent" : "On leave";
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${style}`}>{label}</span>;
 }
 
 function Actions({ record, name, downloading, onEdit, onDownload }: { record: Attendance; name: string; downloading?: boolean; onEdit: (record: Attendance) => void; onDownload: (record: Attendance) => void }) {

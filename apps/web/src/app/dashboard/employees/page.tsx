@@ -3,7 +3,7 @@
 import { PageHeader, EmptyState, TableSkeleton, useToast } from "@/components/ui";
 import { Users, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useAuth, type Role } from "@/lib/auth-context";
+import { useAuth } from "@/lib/auth-context";
 import { Employee } from "@/lib/models";
 import useEmployees from "@/lib/hooks/useEmployees";
 import employeeService from "@/lib/services/employeeService";
@@ -12,7 +12,6 @@ import EmployeeForm from "./EmployeeForm";
 import EmployeePaymentModal from "./EmployeePaymentModal";
 import PaymentHistory from "./PaymentHistory";
 import EmployeeActionModal from "./EmployeeActionModal";
-import EmployeeRoleModal from "./EmployeeRoleModal";
 import EmployeePaymentHistoryModal from "./EmployeePaymentHistoryModal";
 
 export default function EmployeesPage() {
@@ -23,7 +22,6 @@ export default function EmployeesPage() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [actionOpen, setActionOpen] = useState(false);
-  const [roleOpen, setRoleOpen] = useState(false);
   const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -90,25 +88,6 @@ export default function EmployeesPage() {
     }
   }
 
-  async function handleRoleChange(roleValue: Role) {
-    const employee = selectedEmployee;
-    if (!employee) return;
-
-    setBusyAction(true);
-    try {
-      await employeeService.assignEmployeeRole({ employeeId: employee.id, role: roleValue });
-      notify("Role updated", "success");
-      setRoleOpen(false);
-      setSelectedEmployee(null);
-      refresh();
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? "Could not change role.";
-      notify(msg, "error");
-    } finally {
-      setBusyAction(false);
-    }
-  }
-
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader eyebrow="Administration" title="Employees" icon={Users} />
@@ -156,10 +135,6 @@ export default function EmployeesPage() {
                     setEditingEmployee(emp);
                     setEditOpen(true);
                   }}
-                  onChangeRole={(emp) => {
-                    setSelectedEmployee(emp);
-                    setRoleOpen(true);
-                  }}
                   onArchive={(emp) => runEmployeeAction("archive", emp)}
                   onToggleStatus={(emp) => runEmployeeAction("status", emp)}
                   onRecordPayment={(emp) => {
@@ -193,7 +168,10 @@ export default function EmployeesPage() {
         mode="edit"
         employee={editingEmployee}
         open={editOpen}
-        onCancel={() => setEditOpen(false)}
+        onCancel={() => {
+          setEditOpen(false);
+          setEditingEmployee(null);
+        }}
         onSuccess={() => {
           setEditOpen(false);
           setEditingEmployee(null);
@@ -218,18 +196,6 @@ export default function EmployeesPage() {
           setActionKind(null);
         }}
         onConfirm={confirmAction}
-      />
-
-      <EmployeeRoleModal
-        open={roleOpen}
-        employeeName={selectedEmployee?.fullName ?? selectedEmployee?.displayName ?? selectedEmployee?.email}
-        currentRole={selectedEmployee?.role}
-        busy={busyAction}
-        onClose={() => {
-          setRoleOpen(false);
-          setSelectedEmployee(null);
-        }}
-        onSubmit={handleRoleChange}
       />
 
       <EmployeePaymentModal

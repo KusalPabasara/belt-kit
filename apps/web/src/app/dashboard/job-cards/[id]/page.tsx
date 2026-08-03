@@ -3,7 +3,18 @@
 import { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { doc, getDoc, onSnapshot, collection, getDocs, query, where as fsWhere, Timestamp } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  Timestamp,
+  where as fsWhere,
+  writeBatch,
+} from "firebase/firestore";
 import { generateInvoiceClient } from "@/lib/invoice";
 import {
   ArrowLeft,
@@ -49,8 +60,6 @@ import {
   ConfirmDialog,
   useToast,
 } from "@/components/ui";
-import { VehicleCheckIn } from "@/components/VehicleCheckIn";
-import { JobPhotos } from "@/components/JobPhotos";
 
 type EditableCharge = { description: string; amount: string };
 
@@ -87,6 +96,7 @@ const [editVehicles, setEditVehicles] = useState<(Vehicle & { id: string })[]>([
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [technicians, setTechnicians] = useState<{ uid: string; name: string }[]>([]);
   const [editOpen,setEditOpen]=useState(false);
+  const [editSaving, setEditSaving] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
 const [editCustomer, setEditCustomer] = useState("");
 const [editVehicle, setEditVehicle] = useState("");
@@ -188,58 +198,87 @@ loadVehicles();
   }
 
   async function updateJob(form: FormData) {
+    if (!job || job.invoiceId) {
+      notify("Services are locked after invoice generation.", "error");
+      return;
+    }
 
-  try {
+    const complaint = String(form.get("complaint") || "").trim();
 
-    await updateDocById(
-  "jobCards",
-  id,
-  {
-    customerId: String(form.get("customerId")),
+    if (!editCustomer || !editVehicle || !complaint || editServices.length === 0) {
+      notify("Customer, vehicle, service and complaint are required.", "error");
+      return;
+    }
 
-    vehicleId: String(form.get("vehicleId")),
+    setEditSaving(true);
+    try {
+      const batch = writeBatch(db);
+      const updatedByUid = auth.currentUser?.uid ?? "unknown";
+      const previousServiceIds = job.serviceTypeIds ?? [];
+      const addedServices = services.filter(
+        (service) =>
+          editServices.includes(service.id) &&
+          !previousServiceIds.includes(service.id),
+      );
+      const removedServiceIds = previousServiceIds.filter(
+        (serviceId) => !editServices.includes(serviceId),
+      );
 
-    complaint: String(form.get("complaint")),
+      batch.update(doc(db, "jobCards", id), {
+        customerId: editCustomer,
+        vehicleId: editVehicle,
+        complaint,
+        serviceTypeIds: editServices,
+        assignedTechnicianIds: editTechnicians,
+        scheduledDate: form.get("scheduledDate")
+          ? Timestamp.fromDate(new Date(String(form.get("scheduledDate"))))
+          : null,
+        startDate: form.get("startDate")
+          ? Timestamp.fromDate(new Date(String(form.get("startDate"))))
+          : null,
+        promisedEndDate: form.get("promisedEndDate")
+          ? Timestamp.fromDate(new Date(String(form.get("promisedEndDate"))))
+          : null,
+        updatedByUid,
+        updatedAt: serverTimestamp(),
+      });
 
-    serviceTypeIds: editServices,
-
-    assignedTechnicianIds: editTechnicians,
-
-    scheduledDate: form.get("scheduledDate")
-      ? Timestamp.fromDate(
-          new Date(String(form.get("scheduledDate")))
+      lines
+        .filter(
+          (line) =>
+            line.serviceTypeId &&
+            removedServiceIds.includes(line.serviceTypeId),
         )
-      : null,
+        .forEach((line) => batch.delete(doc(db, "jobCardLines", line.id)));
 
-    startDate: form.get("startDate")
-      ? Timestamp.fromDate(
-          new Date(String(form.get("startDate")))
-        )
-      : null,
+      addedServices.forEach((service) => {
+        const lineRef = doc(collection(db, "jobCardLines"));
+        batch.set(lineRef, {
+          branchId: job.branchId,
+          jobCardId: id,
+          kind: "labor",
+          serviceTypeId: service.id,
+          description: service.name,
+          quantity: 1,
+          unitPriceMinor: service.defaultPriceMinor,
+          lineTotalMinor: service.defaultPriceMinor,
+          archived: false,
+          createdByUid: updatedByUid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
 
-    promisedEndDate: form.get("promisedEndDate")
-      ? Timestamp.fromDate(
-          new Date(String(form.get("promisedEndDate")))
-        )
-      : null,
+      await batch.commit();
+
+      notify("Job card and service labor lines updated.");
+      setEditOpen(false);
+    } catch {
+      notify("Could not update job card.", "error");
+    } finally {
+      setEditSaving(false);
+    }
   }
-);
-
-
-    notify("Job updated.");
-
-    setEditOpen(false);
-
-
-  } catch {
-
-    notify(
-      "Could not update job.",
-      "error"
-    );
-
-  }
-}
 
 async function deleteJob() {
  try {
@@ -274,6 +313,9 @@ const canEditJob =
   role === "manager" ||
   role === "advisor";
 
+const canEditJobDetails =
+  canEditJob && !readOnly && !job?.invoiceId;
+
 const canDoFinancial =
   role === "owner" ||
   role === "manager" ||
@@ -307,13 +349,17 @@ const canEditLines =
       setJob(j);
       setCompletionNotes(j.completionNotes || "");
       setLoading(false);
-      if (j.customerId && !customer) {
+      if (j.customerId) {
         const cs = await getDoc(doc(db, "customers", j.customerId));
         if (cs.exists()) setCustomer(cs.data() as Customer);
+      } else {
+        setCustomer(null);
       }
-      if (j.vehicleId && !vehicle) {
+      if (j.vehicleId) {
         const vs = await getDoc(doc(db, "vehicles", j.vehicleId));
         if (vs.exists()) setVehicle(vs.data() as Vehicle);
+      } else {
+        setVehicle(null);
       }
     });
     return () => unsub();
@@ -585,7 +631,7 @@ const techCount = (job.assignedTechnicianIds || []).length;
               )}
             </div>
           </div>
-          {!readOnly && (
+          {canEditJobDetails && (
 <button
 onClick={()=>{
  setEditCustomer(job.customerId || "");
@@ -706,12 +752,6 @@ const disabled = readOnly || !(canEditJob || isTech);           return (
     </Field>
   </div>
 )}
-
-      {/* Vehicle Check-in Inspection */}
-      <VehicleCheckIn job={job} jobId={id} canEdit={canEditLines} />
-
-      {/* Before & After Photos */}
-      <JobPhotos job={job} jobId={id} canEdit={canEditLines} />
 
       {/* Assigned technicians */}
       <div className="card p-6">
@@ -984,67 +1024,92 @@ onSubmit={(e)=>{
  e.preventDefault();
  updateJob(new FormData(e.currentTarget));
 }}
-className="space-y-4"
+className="max-h-[75vh] space-y-4 overflow-y-auto pr-2"
 >
 
-<Field label="Services">
-
-<select
-multiple
-value={editServices}
-onChange={(e)=>
-setEditServices(
-Array.from(
-e.target.selectedOptions,
-o=>o.value
-)
-)
-}
-className="input-luxe h-32"
->
-
-
-{services.map(s=>(
-
-<option key={s.id} value={s.id}>
-{s.name}
-</option>
-
-))}
-
-
-</select>
-
+<Field label="Services" required>
+  <div className="max-h-48 space-y-2 overflow-y-auto rounded-xl border border-line bg-surface p-3">
+    {services.filter((service) => service.active || editServices.includes(service.id)).length === 0 ? (
+      <p className="rounded-lg bg-surface-muted px-3 py-4 text-center text-sm text-ink-soft">
+        No services are available. Add an active service from the Services page first.
+      </p>
+    ) : (
+      services
+        .filter((service) => service.active || editServices.includes(service.id))
+        .map((service) => {
+          const selected = editServices.includes(service.id);
+          return (
+            <label
+              key={service.id}
+              className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5 text-sm transition ${
+                selected
+                  ? "border-burgundy-300 bg-burgundy-50 text-burgundy-700"
+                  : "border-line bg-white text-ink-soft hover:border-burgundy-200"
+              }`}
+            >
+              <span>
+                <span className="font-medium">{service.name}</span>
+                <span className="ml-2 text-xs text-ink-faint">
+                  {service.estimatedDays} day{service.estimatedDays === 1 ? "" : "s"}
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={() =>
+                  setEditServices((current) =>
+                    selected
+                      ? current.filter((serviceId) => serviceId !== service.id)
+                      : [...current, service.id],
+                  )
+                }
+                className="h-4 w-4 accent-burgundy-600"
+              />
+            </label>
+          );
+        })
+    )}
+  </div>
 </Field>
 
 <Field label="Technicians">
-
-<select
-multiple
-value={editTechnicians}
-onChange={(e)=>
-setEditTechnicians(
-Array.from(
-e.target.selectedOptions,
-o=>o.value
-)
-)
-}
-className="input-luxe h-32"
->
-
-
-{technicians.map(t=>(
-
-<option key={t.uid} value={t.uid}>
-{t.name}
-</option>
-
-))}
-
-
-</select>
-
+  <div className="max-h-48 space-y-2 overflow-y-auto rounded-xl border border-line bg-surface p-3">
+    {technicians.length === 0 ? (
+      <p className="rounded-lg bg-surface-muted px-3 py-4 text-center text-sm text-ink-soft">
+        No active technician accounts are available.
+      </p>
+    ) : (
+      technicians.map((technician) => {
+        const selected = editTechnicians.includes(technician.uid);
+        return (
+          <label
+            key={technician.uid}
+            className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5 text-sm transition ${
+              selected
+                ? "border-burgundy-300 bg-burgundy-50 text-burgundy-700"
+                : "border-line bg-white text-ink-soft hover:border-burgundy-200"
+            }`}
+          >
+            <span className="flex items-center gap-2 font-medium">
+              <User size={14} /> {technician.name}
+            </span>
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={() =>
+                setEditTechnicians((current) =>
+                  selected
+                    ? current.filter((uid) => uid !== technician.uid)
+                    : [...current, technician.uid],
+                )
+              }
+              className="h-4 w-4 accent-burgundy-600"
+            />
+          </label>
+        );
+      })
+    )}
+  </div>
 </Field>
 
 <Field label="Scheduled Date">
@@ -1171,9 +1236,10 @@ Cancel
 
 <button
 type="submit"
+disabled={editSaving}
 className="btn-primary"
 >
-Save Changes
+{editSaving ? "Saving…" : "Save Changes"}
 </button>
 
 

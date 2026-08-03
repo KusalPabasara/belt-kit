@@ -1,15 +1,24 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  where,
+  writeBatch,
+} from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import { Users, Plus, Phone, Mail, Pencil, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useCollection } from "@/lib/useCollection";
-import { createDoc, updateDocById, deleteDocById } from "@/lib/db-write";
+import { updateDocById, deleteDocById } from "@/lib/db-write";
 import { Customer } from "@/lib/models";
 import { initials } from "@/lib/format";
+import { VehicleRegistrationDetails } from "@/components/VehicleRegistrationDetails";
 import {
   PageHeader,
   Modal,
@@ -27,6 +36,18 @@ import {
 
 const CHANNELS = ["sms", "whatsapp", "email"] as const;
 const SEGMENTS = ["walkin", "vip", "fleet"] as const;
+
+function parsePhotoList(value: FormDataEntryValue | null): string[] {
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function CustomersPage() {
   const { branchId, role } = useAuth();
@@ -162,7 +183,7 @@ const validateEmail = (email:string) => {
     const payload = {
       displayName: String(form.get("displayName") || "").trim(),
       phone: String(form.get("phone") || "").trim(),
-      email: String(form.get("email") || "").trim() || undefined,
+      email: String(form.get("email") || "").trim(),
       preferredChannel: String(form.get("preferredChannel") || "sms"),
       segment: String(form.get("segment") || "walkin"),
     };
@@ -216,13 +237,106 @@ if(!validateEmail(payload.email ?? "")){
   return;
 
 }
+
+    const beforePhotos = parsePhotoList(form.get("beforePhotos"));
+    const afterPhotos = parsePhotoList(form.get("afterPhotos"));
+
+    if (
+      !editing &&
+      [...beforePhotos, ...afterPhotos].reduce(
+        (total, photo) => total + photo.length,
+        0,
+      ) > 700_000
+    ) {
+      notify("The selected photos are too large. Remove one or more photos and try again.", "error");
+      setSaving(false);
+      return;
+    }
+
+    const vehiclePayload = editing
+      ? null
+      : {
+          plateNumber: String(form.get("plateNumber") || "").trim().toUpperCase(),
+          make: String(form.get("make") || "").trim(),
+          model: String(form.get("model") || "").trim(),
+          year: Number(form.get("year") || 0),
+          vin: String(form.get("vin") || "").trim(),
+          engine: String(form.get("engine") || "").trim(),
+          odometerReading: Number(form.get("odometerReading") || 0),
+          fuelLevel: String(form.get("fuelLevel") || "Half"),
+          existingDamage: {
+            scratches: form.get("damageScratches") === "on",
+            dents: form.get("damageDents") === "on",
+            crackedGlass: form.get("damageCrackedGlass") === "on",
+            notes: String(form.get("damageNotes") || "").trim(),
+          },
+          photos: {
+            before: beforePhotos,
+            after: afterPhotos,
+          },
+        };
+
+    if (!editing && form.get("photoUploadInProgress") === "true") {
+      notify("Wait for the selected photos to finish processing.", "error");
+      setSaving(false);
+      return;
+    }
+
+    if (
+      vehiclePayload &&
+      (!vehiclePayload.plateNumber ||
+        !vehiclePayload.make ||
+        !vehiclePayload.model ||
+        !vehiclePayload.year ||
+        !vehiclePayload.vin ||
+        !vehiclePayload.engine ||
+        !String(form.get("odometerReading") || "").trim() ||
+        vehiclePayload.odometerReading < 0)
+    ) {
+      notify("Complete all vehicle details before saving.", "error");
+      setSaving(false);
+      return;
+    }
+
+    if (
+      vehiclePayload &&
+      (vehiclePayload.year < 1900 || vehiclePayload.year > new Date().getFullYear())
+    ) {
+      notify("Enter a valid four-digit vehicle year.", "error");
+      setSaving(false);
+      return;
+    }
+
     try {
       if (editing) {
         await updateDocById("customers", editing.id, payload);
         notify("Customer updated.");
       } else {
-        await createDoc("customers", branchId, payload);
-        notify("Customer added.");
+        const batch = writeBatch(db);
+        const customerRef = doc(collection(db, "customers"));
+        const vehicleRef = doc(collection(db, "vehicles"));
+        const createdByUid = auth.currentUser?.uid ?? "unknown";
+
+        batch.set(customerRef, {
+          ...payload,
+          branchId,
+          archived: false,
+          createdByUid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(vehicleRef, {
+          ...vehiclePayload,
+          customerId: customerRef.id,
+          branchId,
+          archived: false,
+          createdByUid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        await batch.commit();
+        notify("Customer and vehicle added.");
       }
       setModalOpen(false);
     } catch {
@@ -330,14 +444,14 @@ if(!validateEmail(payload.email ?? "")){
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? "Edit Customer" : "New Customer"}
+        title={editing ? "Edit Customer" : "New Customer & Vehicle"}
       >
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleSave(new FormData(e.currentTarget));
           }}
-          className="space-y-4"
+          className="max-h-[75vh] space-y-4 overflow-y-auto pr-2"
         >
           <Field label="Full name" required>
             <input
@@ -408,6 +522,54 @@ if(!validateEmail(payload.email ?? "")){
               </select>
             </Field>
           </div>
+          {!editing && (
+            <>
+              <div className="space-y-4 rounded-xl border border-line bg-surface-muted/30 p-4">
+                <div>
+                  <h3 className="font-sans text-sm font-semibold text-ink">Vehicle details</h3>
+                  <p className="mt-1 font-sans text-xs text-ink-soft">
+                    This vehicle will be linked to the new customer automatically.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Plate number" required>
+                    <input
+                      name="plateNumber"
+                      className="input-luxe uppercase"
+                      placeholder="e.g. CAB-1234"
+                    />
+                  </Field>
+                  <Field label="Year" required>
+                    <input
+                      name="year"
+                      type="number"
+                      min="1900"
+                      max={new Date().getFullYear()}
+                      className="input-luxe"
+                      placeholder="2019"
+                    />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Make" required>
+                    <input name="make" className="input-luxe" placeholder="Toyota" />
+                  </Field>
+                  <Field label="Model" required>
+                    <input name="model" className="input-luxe" placeholder="Aqua" />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="VIN" required>
+                    <input name="vin" className="input-luxe" placeholder="Vehicle identification number" />
+                  </Field>
+                  <Field label="Engine number" required>
+                    <input name="engine" className="input-luxe" placeholder="Engine number" />
+                  </Field>
+                </div>
+              </div>
+              <VehicleRegistrationDetails />
+            </>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
@@ -417,7 +579,7 @@ if(!validateEmail(payload.email ?? "")){
               Cancel
             </button>
             <button type="submit" disabled={saving} className="btn-primary">
-              {saving ? "Saving…" : editing ? "Save changes" : "Add customer"}
+              {saving ? "Saving…" : editing ? "Save changes" : "Add customer & vehicle"}
             </button>
           </div>
         </form>

@@ -16,11 +16,20 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useCollection } from "@/lib/useCollection";
-import { Customer, Invoice, JobCard, Part, Payment, Vehicle } from "@/lib/models";
+import {
+  Customer,
+  Invoice,
+  JobCard,
+  Part,
+  Payment,
+  StockMovement,
+  Vehicle,
+} from "@/lib/models";
 import { canViewReports } from "@/lib/permissions";
 import { downloadCsv, reportCsvFilename, reportPdfFilename } from "@/lib/csv-export";
 import { downloadReportPdf } from "@/lib/pdf-export";
 import { formatDate, formatMoney } from "@/lib/format";
+import { reportDateRange, type ReportPeriod } from "@/lib/workflow-rules";
 import { Badge, EmptyState, PageHeader, TableSkeleton } from "@/components/ui";
 
 type ReportKey = "revenue" | "profit" | "jobs" | "inventory";
@@ -83,6 +92,15 @@ type InventoryRow = {
 };
 
 const PREVIEW_LIMIT = 12;
+
+const REPORT_PERIODS: { value: ReportPeriod; label: string }[] = [
+  { value: "all", label: "All time" },
+  { value: "today", label: "Today" },
+  { value: "week", label: "This week" },
+  { value: "month", label: "This month" },
+  { value: "three_months", label: "Last 3 months" },
+  { value: "custom", label: "Custom" },
+];
 
 function finiteNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -457,14 +475,49 @@ export default function ReportsPage() {
     useCollection<JobCard>("jobCards", [], true);
   const { data: parts, loading: partsLoading, error: partsError } =
     useCollection<Part>("parts", [], true);
+  const {
+    data: stockMovements,
+    loading: stockMovementsLoading,
+    error: stockMovementsError,
+  } = useCollection<StockMovement>("stockMovements", [], true);
 
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [activeReport, setActiveReport] = useState<ReportKey>("revenue");
 
-  const from = useMemo(() => parseDateInput(fromDate), [fromDate]);
-  const to = useMemo(() => parseDateInput(toDate, true), [toDate]);
-  const invalidRange = Boolean(from && to && from > to);
+  const { from, to, effectiveFromDate, effectiveToDate } = useMemo(() => {
+    const customFrom = parseDateInput(fromDate);
+    const customTo = parseDateInput(toDate, true);
+    const { from, to } = reportDateRange(reportPeriod, new Date(), customFrom, customTo);
+
+    if (reportPeriod === "custom") {
+      return {
+        from,
+        to,
+        effectiveFromDate: fromDate,
+        effectiveToDate: toDate,
+      };
+    }
+
+    if (reportPeriod === "all") {
+      return {
+        from: null,
+        to: null,
+        effectiveFromDate: "",
+        effectiveToDate: "",
+      };
+    }
+
+    return {
+      from,
+      to,
+      effectiveFromDate: from ? localDateInput(from) : "",
+      effectiveToDate: to ? localDateInput(to) : "",
+    };
+  }, [fromDate, reportPeriod, toDate]);
+  const customRangeIncomplete = reportPeriod === "custom" && (!from || !to);
+  const invalidRange = customRangeIncomplete || Boolean(from && to && from > to);
 
   const customerById = useMemo(
     () => new Map(customers.map((customer) => [customer.id, customer])),
@@ -624,10 +677,33 @@ export default function ReportsPage() {
   }, [customerById, from, invalidRange, jobs, to, vehicleById]);
 
   const inventoryRows = useMemo<InventoryRow[]>(() => {
+    if (invalidRange) return [];
+
+    // Inventory is a point-in-time report. For historical custom ranges, roll
+    // back movements recorded after the selected end date to reconstruct the
+    // quantity that was on hand at that time.
+    const snapshotEnd = to ?? new Date();
+    const movementsAfterSnapshot = new Map<string, number>();
+    stockMovements.forEach((movement) => {
+      const movementDate = dateFromUnknown(movement.createdAt);
+      if (!movementDate || movementDate <= snapshotEnd) return;
+      movementsAfterSnapshot.set(
+        movement.partId,
+        (movementsAfterSnapshot.get(movement.partId) ?? 0) + finiteNumber(movement.delta)
+      );
+    });
+
     return parts
-      .filter((part) => !part.archived)
+      .filter((part) => {
+        if (part.archived) return false;
+        const createdAt = dateFromUnknown(part.createdAt);
+        return !createdAt || createdAt <= snapshotEnd;
+      })
       .map((part) => {
-        const quantity = finiteNumber(part.quantityOnHand);
+        const quantity = Math.max(
+          0,
+          finiteNumber(part.quantityOnHand) - (movementsAfterSnapshot.get(part.id) ?? 0)
+        );
         const reorderLevel = finiteNumber(part.reorderThreshold);
         const unitCostMinor = minorAmount(part.costPriceMinor);
         const sellPriceMinor = minorAmount(part.sellPriceMinor);
@@ -637,7 +713,7 @@ export default function ReportsPage() {
           name: part.name || "Unnamed part",
           quantity,
           reorderLevel,
-          lowStock: Boolean(part.lowStock) || quantity <= reorderLevel,
+          lowStock: quantity <= reorderLevel,
           binLocation: part.binLocation || "",
           unitCostMinor,
           sellPriceMinor,
@@ -646,7 +722,7 @@ export default function ReportsPage() {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [parts]);
+  }, [invalidRange, parts, stockMovements, to]);
 
   const totalInvoiced = revenueRows.reduce((sum, row) => sum + row.totalMinor, 0);
   const totalCollected = revenueRows.reduce((sum, row) => sum + row.paidMinor, 0);
@@ -658,32 +734,34 @@ export default function ReportsPage() {
   const lowStockCount = inventoryRows.filter((row) => row.lowStock).length;
   const primaryCurrency = revenueRows[0]?.currency ?? invoices[0]?.currency ?? "LKR";
 
-  const periodLabel = from && to
-    ? `${formatDate(from)} – ${formatDate(to)}`
-    : from
-      ? `From ${formatDate(from)}`
-      : to
-        ? `Through ${formatDate(to)}`
-        : "All recorded dates";
+  const selectedPeriodName =
+    REPORT_PERIODS.find((period) => period.value === reportPeriod)?.label ?? "All time";
+  const periodLabel = reportPeriod === "all"
+    ? "All recorded dates"
+    : from && to
+      ? `${selectedPeriodName} · ${formatDate(from)} – ${formatDate(to)}`
+      : from
+        ? `Custom · From ${formatDate(from)}`
+        : to
+          ? `Custom · Through ${formatDate(to)}`
+          : "Custom date range";
+  const inventoryPeriodLabel = to
+    ? `Inventory as of ${formatDate(to)}`
+    : "Current inventory snapshot";
 
-  const setLast30Days = () => {
-    const end = new Date();
-    const start = new Date(end);
-    start.setDate(end.getDate() - 29);
-    setFromDate(localDateInput(start));
-    setToDate(localDateInput(end));
-  };
-
-  const setThisMonth = () => {
-    const end = new Date();
-    const start = new Date(end.getFullYear(), end.getMonth(), 1);
-    setFromDate(localDateInput(start));
-    setToDate(localDateInput(end));
-  };
+  function selectReportPeriod(period: ReportPeriod) {
+    if (period === "custom" && (!fromDate || !toDate)) {
+      const end = new Date();
+      const start = new Date(end.getFullYear(), end.getMonth(), 1);
+      setFromDate(localDateInput(start));
+      setToDate(localDateInput(end));
+    }
+    setReportPeriod(period);
+  }
 
   const exportRevenue = () =>
     downloadCsv<RevenueRow>(
-      reportCsvFilename("revenue", fromDate, toDate),
+      reportCsvFilename("revenue", effectiveFromDate, effectiveToDate),
       [
         { header: "Last payment date in period", value: (row) => csvDate(row.date) },
         { header: "Invoice", value: (row) => row.invoice },
@@ -699,7 +777,7 @@ export default function ReportsPage() {
 
   const exportRevenuePdf = () =>
     downloadReportPdf<RevenueRow>({
-      filename: reportPdfFilename("revenue", fromDate, toDate),
+      filename: reportPdfFilename("revenue", effectiveFromDate, effectiveToDate),
       title: "Revenue report",
       periodLabel,
       columns: [
@@ -716,7 +794,7 @@ export default function ReportsPage() {
 
   const exportProfit = () =>
     downloadCsv<ProfitRow>(
-      reportCsvFilename("profit", fromDate, toDate),
+      reportCsvFilename("profit", effectiveFromDate, effectiveToDate),
       [
         { header: "Date", value: (row) => csvDate(row.date) },
         { header: "Invoice", value: (row) => row.invoice },
@@ -732,7 +810,7 @@ export default function ReportsPage() {
 
   const exportProfitPdf = () =>
     downloadReportPdf<ProfitRow>({
-      filename: reportPdfFilename("gross-profit", fromDate, toDate),
+      filename: reportPdfFilename("gross-profit", effectiveFromDate, effectiveToDate),
       title: "Gross profit report",
       periodLabel,
       columns: [
@@ -749,7 +827,7 @@ export default function ReportsPage() {
 
   const exportCompletedJobs = () =>
     downloadCsv<CompletedJobRow>(
-      reportCsvFilename("completed-jobs", fromDate, toDate),
+      reportCsvFilename("completed-jobs", effectiveFromDate, effectiveToDate),
       [
         { header: "Completion date", value: (row) => csvDate(row.date) },
         { header: "Job", value: (row) => row.job },
@@ -765,7 +843,7 @@ export default function ReportsPage() {
 
   const exportCompletedJobsPdf = () =>
     downloadReportPdf<CompletedJobRow>({
-      filename: reportPdfFilename("completed-jobs", fromDate, toDate),
+      filename: reportPdfFilename("completed-jobs", effectiveFromDate, effectiveToDate),
       title: "Completed jobs report",
       periodLabel,
       columns: [
@@ -781,9 +859,9 @@ export default function ReportsPage() {
     });
 
   const exportInventory = () => {
-    const today = localDateInput(new Date());
+    const snapshotDate = effectiveToDate || localDateInput(new Date());
     downloadCsv<InventoryRow>(
-      `belt-kit-inventory-snapshot-${today}.csv`,
+      `belt-kit-inventory-snapshot-${snapshotDate}.csv`,
       [
         { header: "SKU", value: (row) => row.sku },
         { header: "Part", value: (row) => row.name },
@@ -801,11 +879,11 @@ export default function ReportsPage() {
   };
 
   const exportInventoryPdf = () => {
-    const today = localDateInput(new Date());
+    const snapshotDate = effectiveToDate || localDateInput(new Date());
     downloadReportPdf<InventoryRow>({
-      filename: `belt-kit-inventory-snapshot-${today}.pdf`,
+      filename: `belt-kit-inventory-snapshot-${snapshotDate}.pdf`,
       title: "Inventory snapshot",
-      periodLabel: "Current inventory snapshot",
+      periodLabel: inventoryPeriodLabel,
       columns: [
         { header: "SKU", value: (row) => row.sku },
         { header: "Part", value: (row) => row.name },
@@ -822,7 +900,7 @@ export default function ReportsPage() {
 
   const loading =
     invoicesLoading || paymentsLoading || customersLoading || vehiclesLoading ||
-    jobsLoading || partsLoading;
+    jobsLoading || partsLoading || stockMovementsLoading;
   const errors = [
     invoicesError,
     paymentsError,
@@ -830,6 +908,7 @@ export default function ReportsPage() {
     vehiclesError,
     jobsError,
     partsError,
+    stockMovementsError,
   ].filter((error): error is string => Boolean(error));
 
   if (!canViewReports(role)) {
@@ -852,37 +931,84 @@ export default function ReportsPage() {
       <PageHeader eyebrow="Finance & operations" title="Reports" icon={BarChart3} />
 
       <section className="card mb-5 p-5" aria-labelledby="report-period-heading">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="max-w-md">
             <div className="flex items-center gap-2 text-sm font-semibold text-ink" id="report-period-heading">
               <CalendarDays size={16} className="text-burgundy-500" /> Report period
             </div>
-            <p className="mt-1 text-xs text-ink-faint">
-              Applies to revenue, profit and completed jobs. Inventory is always a live snapshot.
+            <p className="mt-1 text-xs leading-relaxed text-ink-faint">
+              One period controls revenue, gross profit, completed jobs and the inventory snapshot.
             </p>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <label className="block">
-              <span className="label-luxe">From</span>
-              <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="input-luxe min-w-40" />
-            </label>
-            <label className="block">
-              <span className="label-luxe">To</span>
-              <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="input-luxe min-w-40" />
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={setThisMonth} className="btn-ghost !px-3 !py-2.5 text-xs">This month</button>
-              <button type="button" onClick={setLast30Days} className="btn-ghost !px-3 !py-2.5 text-xs">Last 30 days</button>
-              <button type="button" onClick={() => { setFromDate(""); setToDate(""); }} disabled={!fromDate && !toDate} className="btn-ghost !px-3 !py-2.5 text-xs">All time</button>
-            </div>
+
+          <div
+            className="flex flex-wrap gap-1.5 rounded-2xl border border-line bg-surface-muted/55 p-1.5"
+            role="group"
+            aria-label="Select report period"
+          >
+            {REPORT_PERIODS.map((period) => {
+              const selected = reportPeriod === period.value;
+              return (
+                <button
+                  key={period.value}
+                  type="button"
+                  onClick={() => selectReportPeriod(period.value)}
+                  aria-pressed={selected}
+                  className={`rounded-xl px-3.5 py-2 text-xs font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-burgundy-300 ${
+                    selected
+                      ? "bg-white text-burgundy-700 shadow-sm ring-1 ring-burgundy-200"
+                      : "text-ink-soft hover:bg-white/70 hover:text-ink"
+                  }`}
+                >
+                  {period.label}
+                </button>
+              );
+            })}
           </div>
         </div>
+
+        {reportPeriod === "custom" && (
+          <div className="mt-5 rounded-2xl border border-burgundy-100 bg-burgundy-50/40 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-xl">
+              <label className="block">
+                <span className="label-luxe">From</span>
+                <input
+                  type="date"
+                  value={fromDate}
+                  max={toDate || undefined}
+                  onChange={(event) => setFromDate(event.target.value)}
+                  className="input-luxe w-full"
+                />
+              </label>
+              <label className="block">
+                <span className="label-luxe">To</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  min={fromDate || undefined}
+                  onChange={(event) => setToDate(event.target.value)}
+                  className="input-luxe w-full"
+                />
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-ink-faint">
+              Both dates are included. The inventory report is reconstructed at the end of this range.
+            </p>
+          </div>
+        )}
+
         {invalidRange ? (
           <div className="mt-4 flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <AlertTriangle size={16} /> The start date must be before or equal to the end date.
+            <AlertTriangle size={16} />
+            {customRangeIncomplete
+              ? "Choose both a From and To date for the custom report."
+              : "The start date must be before or equal to the end date."}
           </div>
         ) : (
-          <p className="mt-4 text-xs font-medium text-burgundy-600">{periodLabel}</p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span className="font-semibold text-burgundy-700">{periodLabel}</span>
+            <span className="text-ink-faint">{inventoryPeriodLabel}</span>
+          </div>
         )}
       </section>
 
@@ -937,12 +1063,13 @@ export default function ReportsPage() {
               active={activeReport === "inventory"}
               icon={Package}
               title="Inventory snapshot"
-              description="Current stock quantities, reorder warnings and inventory value."
+              description="Stock quantities, reorder warnings and inventory value at the period end."
               value={formatMoney(inventoryRetailValue)}
-              hint={`${inventoryRows.length} parts · ${lowStockCount} low stock`}
+              hint={`${inventoryRows.length} parts · ${lowStockCount} low stock · ${inventoryPeriodLabel.toLocaleLowerCase()}`}
               onSelect={() => setActiveReport("inventory")}
               onDownload={exportInventory}
               onDownloadPdf={exportInventoryPdf}
+              downloadDisabled={invalidRange}
             />
           </div>
 
@@ -958,7 +1085,7 @@ export default function ReportsPage() {
                 </h2>
               </div>
               <p className="text-xs text-ink-faint">
-                {activeReport === "inventory" ? "Current inventory snapshot" : periodLabel}
+                {activeReport === "inventory" ? inventoryPeriodLabel : periodLabel}
               </p>
             </div>
             {activeReport === "revenue" && <RevenueTable rows={revenueRows} />}

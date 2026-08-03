@@ -232,15 +232,23 @@ async function seedDemoData(userIds) {
     ["customer-fernando", { displayName: "Ruwan Fernando", phone: "0765558123", email: "ruwan@example.test", preferredChannel: "email", segment: "fleet" }],
   ];
   const vehicles = [
-    ["vehicle-perera", { customerId: "customer-perera", plateNumber: "CAB-4821", make: "Toyota", model: "Aqua", year: 2016, engine: "1500cc Hybrid" }],
-    ["vehicle-silva", { customerId: "customer-silva", plateNumber: "CAA-9087", make: "Honda", model: "Fit", year: 2015, engine: "1300cc" }],
-    ["vehicle-fernando", { customerId: "customer-fernando", plateNumber: "CAR-3310", make: "Suzuki", model: "Wagon R", year: 2018, engine: "1000cc" }],
+    ["vehicle-perera", { customerId: "customer-perera", plateNumber: "CAB-4821", make: "Toyota", model: "Aqua", year: 2016, engine: "1500cc Hybrid", odometerReading: 68420, fuelLevel: "Half", existingDamage: { scratches: true, dents: false, crackedGlass: false, notes: "Light scratch on rear bumper." } }],
+    ["vehicle-silva", { customerId: "customer-silva", plateNumber: "CAA-9087", make: "Honda", model: "Fit", year: 2015, engine: "1300cc", odometerReading: 92110, fuelLevel: "Quarter", existingDamage: { scratches: false, dents: true, crackedGlass: false, notes: "Small dent on left front door." } }],
+    ["vehicle-fernando", { customerId: "customer-fernando", plateNumber: "CAR-3310", make: "Suzuki", model: "Wagon R", year: 2018, engine: "1000cc", odometerReading: 45780, fuelLevel: "Half", existingDamage: { scratches: false, dents: false, crackedGlass: false, notes: "" } }],
   ];
   const parts = [
     ["part-engine-oil", { sku: "OIL-5W30", name: "Engine Oil 5W-30", costPriceMinor: 220000, sellPriceMinor: 350000, quantityOnHand: 18, reorderThreshold: 10, lowStock: false, binLocation: "A-01" }],
     ["part-oil-filter", { sku: "OF-1023", name: "Oil Filter", costPriceMinor: 180000, sellPriceMinor: 300000, quantityOnHand: 6, reorderThreshold: 5, lowStock: false, binLocation: "A-02" }],
     ["part-brake-pad", { sku: "BP-445", name: "Front Brake Pad Set", costPriceMinor: 650000, sellPriceMinor: 950000, quantityOnHand: 2, reorderThreshold: 4, lowStock: true, binLocation: "B-04" }],
     ["part-air-filter", { sku: "AF-210", name: "Air Filter", costPriceMinor: 145000, sellPriceMinor: 240000, quantityOnHand: 0, reorderThreshold: 3, lowStock: true, binLocation: "A-05" }],
+  ];
+  const services = [
+    ["service-body-wash", { name: "Body Wash", defaultPriceMinor: 500000, estimatedDays: 1, active: true }],
+    ["service-full-service", { name: "Full Service", defaultPriceMinor: 1500000, estimatedDays: 2, active: true }],
+    ["service-repair", { name: "General Repair", defaultPriceMinor: 2500000, estimatedDays: 5, active: true }],
+    ["service-engine-diagnostics", { name: "Engine Diagnostics", defaultPriceMinor: 800000, estimatedDays: 1, active: true }],
+    ["service-brake-repair", { name: "Brake Inspection & Repair", defaultPriceMinor: 1450000, estimatedDays: 2, active: true }],
+    ["service-paint", { name: "Paint", defaultPriceMinor: 5000000, estimatedDays: 7, active: true }],
   ];
 
   const writeBatch = db.batch();
@@ -253,26 +261,33 @@ async function seedDemoData(userIds) {
   parts.forEach(([id, data]) => writeBatch.set(db.collection("parts").doc(id), {
     ...data, branchId: BRANCH_ID, archived: false, createdAt: timestampDaysAgo(20), updatedAt: now,
   }, { merge: true }));
+  services.forEach(([id, data]) => writeBatch.set(db.collection("services").doc(id), {
+    ...data, branchId: BRANCH_ID, archived: false, createdAt: timestampDaysAgo(20), updatedAt: now,
+  }, { merge: true }));
   await writeBatch.commit();
 
   const jobs = [
     ["job-service-paid", {
       customerId: "customer-perera", vehicleId: "vehicle-perera", complaint: "Regular service and AC cleaning", status: "delivered",
+      serviceTypeIds: ["service-full-service"],
       assignedTechnicianIds: technicianUid ? [technicianUid] : [], subtotalMinor: 2200000, taxMinor: 418950, totalMinor: 2746450,
       invoiceId: "invoice-service-paid", createdAt: timestampDaysAgo(12), updatedAt: now,
     }],
     ["job-brakes-partpaid", {
       customerId: "customer-silva", vehicleId: "vehicle-silva", complaint: "Front brake noise when stopping", status: "ready",
+      serviceTypeIds: ["service-brake-repair"],
       assignedTechnicianIds: technicianUid ? [technicianUid] : [], subtotalMinor: 1450000, taxMinor: 261000, totalMinor: 1711000,
       invoiceId: "invoice-brakes-partpaid", createdAt: timestampDaysAgo(7), updatedAt: now,
     }],
     ["job-diagnosis-open", {
       customerId: "customer-fernando", vehicleId: "vehicle-fernando", complaint: "Check engine light and rough idle", status: "in_progress",
+      serviceTypeIds: ["service-engine-diagnostics"],
       assignedTechnicianIds: technicianUid ? [technicianUid] : [], subtotalMinor: 800000, taxMinor: 144000, totalMinor: 944000,
       invoiceId: null, createdAt: timestampDaysAgo(1), updatedAt: now,
     }],
     ["job-invoice-demo-open", {
       customerId: "customer-perera", vehicleId: "vehicle-perera", complaint: "Invoice demo — service package ready for pricing", status: "ready",
+      serviceTypeIds: ["service-full-service"],
       assignedTechnicianIds: technicianUid ? [technicianUid] : [], subtotalMinor: 650000, taxMinor: 117000, totalMinor: 767000,
       invoiceId: null, createdAt: timestampDaysAgo(0, 9), updatedAt: now,
     }],
@@ -281,12 +296,12 @@ async function seedDemoData(userIds) {
   const jobLines = [
     ["line-service-oil", { jobCardId: "job-service-paid", kind: "part", description: "Engine Oil 5W-30", partId: "part-engine-oil", quantity: 4, unitPriceMinor: 350000, lineTotalMinor: 1400000 }],
     ["line-service-filter", { jobCardId: "job-service-paid", kind: "part", description: "Oil Filter", partId: "part-oil-filter", quantity: 1, unitPriceMinor: 300000, lineTotalMinor: 300000 }],
-    ["line-service-labour", { jobCardId: "job-service-paid", kind: "labor", description: "Full service labour", quantity: 1, unitPriceMinor: 500000, lineTotalMinor: 500000 }],
+    ["line-service-labour", { jobCardId: "job-service-paid", kind: "labor", serviceTypeId: "service-full-service", description: "Full service labour", quantity: 1, unitPriceMinor: 500000, lineTotalMinor: 500000 }],
     ["line-brakes-pad", { jobCardId: "job-brakes-partpaid", kind: "part", description: "Front Brake Pad Set", partId: "part-brake-pad", quantity: 1, unitPriceMinor: 950000, lineTotalMinor: 950000 }],
-    ["line-brakes-labour", { jobCardId: "job-brakes-partpaid", kind: "labor", description: "Brake inspection and fitting", quantity: 1, unitPriceMinor: 500000, lineTotalMinor: 500000 }],
-    ["line-diagnosis", { jobCardId: "job-diagnosis-open", kind: "labor", description: "Engine diagnostics", quantity: 1, unitPriceMinor: 800000, lineTotalMinor: 800000 }],
+    ["line-brakes-labour", { jobCardId: "job-brakes-partpaid", kind: "labor", serviceTypeId: "service-brake-repair", description: "Brake inspection and fitting", quantity: 1, unitPriceMinor: 500000, lineTotalMinor: 500000 }],
+    ["line-diagnosis", { jobCardId: "job-diagnosis-open", kind: "labor", serviceTypeId: "service-engine-diagnostics", description: "Engine diagnostics", quantity: 1, unitPriceMinor: 800000, lineTotalMinor: 800000 }],
     ["line-invoice-demo-filter", { jobCardId: "job-invoice-demo-open", kind: "part", description: "Oil Filter", partId: "part-oil-filter", quantity: 1, unitPriceMinor: 300000, lineTotalMinor: 300000 }],
-    ["line-invoice-demo-labour", { jobCardId: "job-invoice-demo-open", kind: "labor", description: "Service and inspection labour", quantity: 1, unitPriceMinor: 350000, lineTotalMinor: 350000 }],
+    ["line-invoice-demo-labour", { jobCardId: "job-invoice-demo-open", kind: "labor", serviceTypeId: "service-full-service", description: "Service and inspection labour", quantity: 1, unitPriceMinor: 350000, lineTotalMinor: 350000 }],
   ];
 
   const invoiceLines = {

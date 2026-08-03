@@ -19,6 +19,11 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import type { Attendance, AttendanceStatus } from "../types/attendance";
+import {
+  attendanceDocumentId,
+  normaliseAttendanceNote,
+  summariseAttendance,
+} from "../workflow-rules";
 
 type CreateAttendancePayload = {
   employeeId: string;
@@ -43,6 +48,7 @@ type AttendanceSummaryResponse = {
   employeeId: string;
   month: string;
   presentDays: number;
+  absentDays: number;
   leaveDays: number;
   totalDays: number;
 };
@@ -74,7 +80,7 @@ export async function createAttendance(
     throw new Error("Employee and date are required.");
   }
   const branchId = await currentBranchId();
-  const id = `${payload.employeeId}_${payload.date}`;
+  const id = attendanceDocumentId(payload.employeeId, payload.date);
   const ref = doc(db, "attendance", id);
 
   const existing = await getDoc(ref);
@@ -86,7 +92,7 @@ export async function createAttendance(
       employeeId: payload.employeeId,
       date: payload.date,
       status: payload.status,
-      note: payload.note?.trim() ?? "",
+      note: normaliseAttendanceNote(payload.note),
       branchId,
       archived: false,
       ...(existing.exists() ? {} : { createdByUid: uid, createdAt: serverTimestamp() }),
@@ -125,15 +131,15 @@ export async function getAttendanceSummary(
   month: string
 ): Promise<AttendanceSummaryResponse> {
   const { attendance } = await getAttendanceList({ employeeId, month });
-  const presentDays = attendance.filter((a) => a.status === "present").length;
-  const leaveDays = attendance.filter((a) => a.status === "on_leave").length;
+  const { presentDays, absentDays, leaveDays, totalDays } = summariseAttendance(attendance);
   return {
     success: true,
     employeeId,
     month,
     presentDays,
+    absentDays,
     leaveDays,
-    totalDays: attendance.length,
+    totalDays,
   };
 }
 

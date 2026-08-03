@@ -30,6 +30,18 @@ export interface Vehicle {
   model: string;
   year?: number;
   engine?: string;
+  odometerReading?: number | null;
+  fuelLevel?: "Empty" | "Quarter" | "Half" | "Full" | string | null;
+  existingDamage?: {
+    scratches?: boolean;
+    dents?: boolean;
+    crackedGlass?: boolean;
+    notes?: string;
+  } | null;
+  photos?: {
+    before?: string[];
+    after?: string[];
+  } | null;
   archived?: boolean;
   createdAt?: Timestamp;
 }
@@ -75,22 +87,6 @@ export interface JobCard {
   actualEndDate?: Timestamp | null;
   completionNotes?: string;
 
-  // Vehicle check-in / inspection.
-  odometerReading?: number | null;
-  fuelLevel?: "Empty" | "Quarter" | "Half" | "Full" | string | null;
-  existingDamage?: {
-    scratches?: boolean;
-    dents?: boolean;
-    crackedGlass?: boolean;
-    notes?: string;
-  } | null;
-
-  // Before / after photos.
-  photos?: {
-    before?: string[];
-    after?: string[];
-  } | null;
-
   delayNote?: string | null;
 
   archived?: boolean;
@@ -101,6 +97,8 @@ export interface JobCardLine {
   branchId: string;
   jobCardId: string;
   kind: "labor" | "part";
+  /** Present when this labor line was generated from a selected service. */
+  serviceTypeId?: string | null;
   description: string;
   partId?: string | null;
   quantity: number;
@@ -150,42 +148,149 @@ export type InsuranceClaimStatus =
   | "received"
   | "rejected";
 
+/** Workflow states used by the insurance case workspace. */
+export type InsuranceCaseStage =
+  | "intake"
+  | "documents"
+  | "assessment"
+  | "approval"
+  | "repair"
+  | "final_invoice"
+  | "release"
+  | "settlement"
+  | "closed";
+
+export type InsuranceApprovalStatus =
+  | "pending"
+  | "partly_approved"
+  | "partially_approved"
+  | "approved"
+  | "rejected"
+  | "disputed";
+
+export type InsuranceReleaseStatus =
+  | "blocked"
+  | "eligible"
+  | "release_order_verified"
+  | "authorized"
+  | "released";
+
+export type InsuranceSettlementStatus =
+  | "not_due"
+  | "insurer_pending"
+  | "customer_pending"
+  | "part_paid"
+  | "overdue"
+  | "disputed"
+  | "reconciled";
+
+export type InsuranceDocumentStatus =
+  | "not_started"
+  | "incomplete"
+  | "ready_for_review"
+  | "verified";
+
+export type InsurancePaymentMethod =
+  | "cash"
+  | "cheque"
+  | "bank_transfer"
+  | "card"
+  | "other";
+
+export type InsuranceChequeStatus =
+  | "not_applicable"
+  | "expected"
+  | "received"
+  | "deposited"
+  | "cleared"
+  | "bounced"
+  | "reversed";
+
+export type InsurancePaymentRoute =
+  | "insurer_direct"
+  | "customer_direct"
+  | "split";
 
 export interface InsuranceClaim {
+  /** Firestore document ID. For new claims this is exactly `jobCardId`. */
+  id: string;
+  schemaVersion?: number;
+  branchId: string;
+  jobCardId: string;
+  customerId: string;
+  vehicleId: string;
 
-  id:string;
+  companyName: string;
+  policyNumber?: string;
+  claimNumber?: string;
+  currency?: string;
+  paymentRoute?: InsurancePaymentRoute;
 
-  branchId:string;
+  /** Legacy summary fields retained so existing records remain readable. */
+  claimAmountMinor: number;
+  receivedAmountMinor: number;
+  status: InsuranceClaimStatus;
 
-  jobCardId:string;
+  caseStage: InsuranceCaseStage;
+  approvalStatus: InsuranceApprovalStatus;
+  releaseStatus: InsuranceReleaseStatus;
+  settlementStatus: InsuranceSettlementStatus;
 
-  customerId:string;
+  /** User-entered assessment and final allocation amounts, in minor units. */
+  assessedAmountMinor: number;
+  approvedAmountMinor: number;
+  insurerResponsibilityMinor: number;
+  /** Transitional alias written by the case UI; equals finalInvoiceTotalMinor. */
+  finalInvoiceAmountMinor?: number;
+  finalInvoiceTotalMinor: number;
+  insurerReceivedMinor: number;
+  customerResponsibilityMinor: number;
+  customerReceivedMinor: number;
+  writeOffMinor: number;
 
-  vehicleId:string;
+  invoiceId?: string | null;
+  finalInvoiceId?: string | null;
+  assessorName?: string;
+  assessmentReference?: string;
+  /** Date inputs are ISO `YYYY-MM-DD` strings in the current prototype. */
+  accidentDate?: Timestamp | string | null;
+  assessmentDate?: Timestamp | string | null;
+  quantumEstablishedAt?: Timestamp | string | null;
+  dischargeDocumentsReceivedAt?: Timestamp | string | null;
+  identityVerifiedAt?: Timestamp | null;
+  expectedSettlementDate?: Timestamp | string | null;
+  expectedSettlementAt?: Timestamp | null;
+  regulatorySettlementDate?: Timestamp | string | null;
+  regulatorySettlementDueAt?: Timestamp | null;
 
+  /** A release order is authorization/receivable evidence, not a payment. */
+  releaseOrderReference?: string;
+  releaseOrderNumber?: string;
+  releaseOrderDate?: Timestamp | string | null;
+  releaseOrderVerifiedAt?: Timestamp | null;
+  releasedAt?: Timestamp | string | null;
+  releasedByUid?: string | null;
+  releaseOverrideReason?: string;
 
-  companyName:string;
+  insurerPaymentMethod?: InsurancePaymentMethod;
+  insurerPaymentReference?: string;
+  customerPaymentReference?: string;
+  chequeStatus?: InsuranceChequeStatus;
+  chequeReceivedAt?: Timestamp | null;
+  chequeClearedAt?: Timestamp | null;
 
-  policyNumber?:string;
+  /** Upload handling is deferred; these fields hold UI summary state only. */
+  documentStatus?: InsuranceDocumentStatus;
+  documentCount?: number;
+  verifiedDocumentCount?: number;
 
-  claimNumber?:string;
-
-
-  claimAmountMinor:number;
-
-  receivedAmountMinor:number;
-
-
-  status:InsuranceClaimStatus;
-
-
-  notes?:string;
-
-
-  archived?:boolean;
-
-  createdAt:any;
-
+  notes?: string;
+  settlementNotes?: string;
+  archived?: boolean;
+  createdByUid?: string;
+  updatedByUid?: string;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 export type AssistantMessageRole = "user" | "assistant";

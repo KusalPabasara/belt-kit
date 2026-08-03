@@ -154,42 +154,46 @@ async function main() {
   });
 
   const attendanceId = `${RUN_ID}-attendance`;
-  await test("leave: PRESENT creates no alert", async () => {
+  await test("leave: present creates no alert", async () => {
     await db.collection("attendance").doc(attendanceId).set({
       employeeId: technician.uid, branchId: MAIN_BRANCH,
-      date: "2030-01-15", status: "PRESENT", note: "initial",
+      date: "2030-01-15", status: "present", note: "initial",
     });
     await new Promise((resolve) => setTimeout(resolve, 1500));
     assert.equal(await countNotifications([["relatedAttendanceId", attendanceId]]), 0);
   });
 
-  await test("leave: transition to ON_LEAVE alerts only same-branch advisor", async () => {
-    await db.collection("attendance").doc(attendanceId).update({ status: "ON_LEAVE" });
+  await test("leave: transition to on_leave alerts eligible same-branch users", async () => {
+    await db.collection("attendance").doc(attendanceId).update({ status: "on_leave" });
     const rows = await waitFor(async () => {
       const found = await notifications([["relatedAttendanceId", attendanceId]]);
-      return found.length === 1 ? found : null;
-    }, "leave notification");
-    assert.equal(rows[0].recipientUid, advisor.uid);
-    assert.equal(rows[0].relatedEmployeeId, technician.uid);
-    assert.equal(rows[0].attendanceDate, "2030-01-15");
-    assert.equal(rows[0].targetType, "ATTENDANCE");
-    assert.equal(rows[0].targetId, attendanceId);
+      return found.length === 3 ? found : null;
+    }, "three leave notifications");
+    assert.deepEqual(rows.map((row) => row.recipientUid).sort(), eligibleMainUids);
+    assert.equal(rows.some((row) => row.recipientUid === otherAdvisor.uid), false);
+    assert.equal(rows.some((row) => row.recipientUid === technician.uid), false);
+    for (const row of rows) {
+      assert.equal(row.relatedEmployeeId, technician.uid);
+      assert.equal(row.attendanceDate, "2030-01-15");
+      assert.equal(row.targetType, "ATTENDANCE");
+      assert.equal(row.targetId, attendanceId);
+    }
   });
 
-  await test("leave: unrelated edit while ON_LEAVE does not duplicate", async () => {
+  await test("leave: unrelated edit while on_leave does not duplicate", async () => {
     await db.collection("attendance").doc(attendanceId).update({ note: "changed" });
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    assert.equal(await countNotifications([["relatedAttendanceId", attendanceId]]), 1);
+    assert.equal(await countNotifications([["relatedAttendanceId", attendanceId]]), 3);
   });
 
-  await test("leave: PRESENT then ON_LEAVE creates a new valid alert", async () => {
+  await test("leave: present then on_leave creates a new valid alert", async () => {
     const ref = db.collection("attendance").doc(attendanceId);
-    await ref.update({ status: "PRESENT" });
+    await ref.update({ status: "present" });
     await new Promise((resolve) => setTimeout(resolve, 750));
-    await ref.update({ status: "ON_LEAVE" });
+    await ref.update({ status: "on_leave" });
     await waitFor(
-      async () => (await countNotifications([["relatedAttendanceId", attendanceId]])) === 2,
-      "second leave notification",
+      async () => (await countNotifications([["relatedAttendanceId", attendanceId]])) === 6,
+      "second leave notification set",
     );
   });
 
